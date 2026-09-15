@@ -83,6 +83,19 @@ jobs:
           path: test-output.txt
           if-no-files-found: warn
 
+      # The runner's log blob is not always downloadable, so mirror the most
+      # important failure lines as job annotations (visible via `gh run view`).
+      - name: Surface test failure details
+        if: failure()
+        run: |
+          set +e
+          sed 's/\x1b\[[0-9;]*m//g' test-output.txt > test-output-clean.txt
+          summary=$(grep -aE "^ *(FAIL|×|✗) |AssertionError|expected .* to|Tests  [0-9]+ failed" test-output-clean.txt | head -25 | tr '\n' ' | ')
+          echo "::error title=Test step failed::${summary:-no failure lines matched; see test-log artifact}"
+          tail -n 30 test-output-clean.txt | while IFS= read -r line; do
+            [ -n "$line" ] && echo "::notice title=test-log::${line}"
+          done
+
       - name: Build web app
         run: npm run build
 
