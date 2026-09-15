@@ -71,7 +71,17 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Test
-        run: npm test
+        run: |
+          npm test 2>&1 | tee test-output.txt
+          exit "${PIPESTATUS[0]}"
+
+      - name: Upload test log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-log
+          path: test-output.txt
+          if-no-files-found: warn
 
       - name: Build web app
         run: npm run build
