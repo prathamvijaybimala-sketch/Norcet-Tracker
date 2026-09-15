@@ -21,6 +21,7 @@ export const KEYS = {
   planConfig: 'planConfig',
   progress: 'progress',
   revision: 'revision',
+  settings: 'settings',
 } as const;
 
 export type StorageKey = (typeof KEYS)[keyof typeof KEYS];
@@ -29,6 +30,24 @@ interface NorcetDB extends DBSchema {
   kv: {
     key: StorageKey;
     value: unknown;
+  };
+}
+
+/** Small per-device preferences that are not part of the export payload. */
+export type AppSettings = {
+  theme: 'dark' | 'light';
+  /** SHA-256 hash of the plan-screen password (see lib/lock.ts), or null. */
+  planLockHash: string | null;
+};
+
+export const DEFAULT_SETTINGS: AppSettings = { theme: 'dark', planLockHash: null };
+
+export function normalizeSettings(value: unknown): AppSettings {
+  if (typeof value !== 'object' || value === null) return { ...DEFAULT_SETTINGS };
+  const v = value as Record<string, unknown>;
+  return {
+    theme: v.theme === 'light' ? 'light' : 'dark',
+    planLockHash: typeof v.planLockHash === 'string' && v.planLockHash.length > 0 ? v.planLockHash : null,
   };
 }
 
@@ -99,16 +118,18 @@ export type PersistedState = {
   planConfig?: PlanConfig;
   progress?: ProgressStore;
   revision?: RevisionStore;
+  settings?: AppSettings;
 };
 
 export async function loadAll(): Promise<PersistedState> {
-  const [curriculum, planConfig, progress, revision] = await Promise.all([
+  const [curriculum, planConfig, progress, revision, settings] = await Promise.all([
     readKey<Subject[]>(KEYS.curriculum),
     readKey<PlanConfig>(KEYS.planConfig),
     readKey<ProgressStore>(KEYS.progress),
     readKey<RevisionStore>(KEYS.revision),
+    readKey<AppSettings>(KEYS.settings),
   ]);
-  return { curriculum, planConfig, progress, revision };
+  return { curriculum, planConfig, progress, revision, settings: normalizeSettings(settings) };
 }
 
 /* --------------------------- debounced writes --------------------------- */
@@ -171,6 +192,7 @@ export async function clearAll(): Promise<void> {
     localStorage.removeItem(LOCAL_PREFIX + KEYS.planConfig);
     localStorage.removeItem(LOCAL_PREFIX + KEYS.progress);
     localStorage.removeItem(LOCAL_PREFIX + KEYS.revision);
+    localStorage.removeItem(LOCAL_PREFIX + KEYS.settings);
   } catch {
     /* ignore */
   }

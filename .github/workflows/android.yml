@@ -16,7 +16,7 @@ name: Android APK
 on:
   push:
     branches:
-      - arena/01a0a49f-norcet-tracker
+      - arena/01a0a57b-norcet-tracker
     tags:
       - 'v*'
   workflow_dispatch:

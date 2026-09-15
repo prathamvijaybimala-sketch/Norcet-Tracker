@@ -11,6 +11,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import App from '../src/App';
 import { useAppStore } from '../src/store/appStore';
+import { addDays, todayISO } from '../src/lib/dates';
+import { nextOffDayOnOrAfter } from '../src/lib/schedule';
 
 const demo = readFileSync(resolve(__dirname, '../public/demo-curriculum.json'), 'utf8');
 
@@ -70,11 +72,11 @@ describe('today screen', () => {
     const lecture = state().lectureIndex.get(todayIds[0])!;
     expect(screen.getByText(lecture.lecture.name)).toBeTruthy();
 
-    // Tick "Watched" on the first lecture row.
+    // Tick "Lecture" on the first lecture row (two boxes per lecture: Lecture + Notes).
     const rows = screen.getAllByText(lecture.lecture.name);
     const row = rows[0].closest('.lecture') as HTMLElement;
     const boxes = within(row).getAllByRole('checkbox');
-    expect(boxes).toHaveLength(3);
+    expect(boxes).toHaveLength(2);
     fireEvent.click(boxes[0]);
 
     await waitFor(() =>
@@ -89,7 +91,7 @@ describe('today screen', () => {
     expect(state().schedule.length).toBeLessThanOrEqual(before);
   });
 
-  it('keeps the three checkboxes independent', async () => {
+  it('keeps lecture boxes independent, with Questions at topic level', async () => {
     await boot();
     await importDemo();
     await screen.findByText("Today's lectures");
@@ -100,12 +102,20 @@ describe('today screen', () => {
       '.lecture',
     ) as HTMLElement;
     const boxes = within(row).getAllByRole('checkbox') as HTMLInputElement[];
+    expect(boxes).toHaveLength(2); // Lecture + Notes only, per lecture
     fireEvent.click(boxes[1]); // notes only
-    fireEvent.click(boxes[2]); // questions only
     const p = state().progress[firstId];
     expect(p.lectureWatched).toBe(false);
     expect(p.notesDone).toBe(true);
-    expect(p.questionsDone).toBe(true);
+    expect(p.questionsDone).toBe(false);
+
+    // Questions is a single checkbox on the topic header and ticks the whole
+    // topic at once.
+    const topic = state().lectureIndex.get(firstId)!.topic;
+    fireEvent.click(screen.getByRole('checkbox', { name: `Questions done for ${topic.name}` }));
+    for (const l of topic.lectures) {
+      expect(state().progress[l.id]?.questionsDone).toBe(true);
+    }
     // Still scheduled (only "watched" removes a lecture from the plan).
     expect(state().scheduleByLecture.get(firstId)).toBe(state().schedule[0].date);
   });
@@ -215,5 +225,157 @@ describe('revision screen', () => {
     expect(useAppStore.getState().revision[id].history).toEqual([
       { date: expect.any(String), result: 'done' },
     ]);
+  });
+});
+
+describe('greeting and theme', () => {
+  it('shows the greeting box with a time-of-day line and a quote', async () => {
+    await boot();
+    await importDemo();
+    await screen.findByText("Today's lectures");
+
+    const line = document.querySelector('.greeting-line');
+    expect(line).toBeTruthy();
+    expect(line!.textContent).toMatch(/Hiiii|Hey|Hello|Namaste|Hi/);
+    const sub = document.querySelector('.greeting-sub')!.textContent ?? '';
+    expect(sub).toMatch(/Good (morning|afternoon|evening|night)/);
+    expect(document.querySelector('.greeting-quote')).toBeTruthy();
+  });
+
+  it('toggles between dark and light mode', async () => {
+    await boot();
+    await importDemo();
+    await screen.findByText("Today's lectures");
+
+    fireEvent.click(screen.getByRole('button', { name: /Switch to light mode/ }));
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe('light'));
+    fireEvent.click(screen.getByRole('button', { name: /Switch to dark mode/ }));
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe('dark'));
+  });
+
+  it('lets the user set the name shown in the greeting', async () => {
+    await boot();
+    await importDemo();
+    await screen.findByText("Today's lectures");
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set your name' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText(/Shown in the daily greeting/), {
+      target: { value: 'Priya' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(useAppStore.getState().planConfig.studentName).toBe('Priya'),
+    );
+    expect(document.querySelector('.greeting-line')!.textContent).toContain('Priya');
+  });
+});
+
+describe('plan lock', () => {
+  it('locks the plan after setting a password, and unlocks with it', async () => {
+    await boot();
+    await importDemo();
+    fireEvent.click(await screen.findByRole('button', { name: /Plan/ }));
+    await screen.findByText('Live preview');
+
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'nurse123' } });
+    fireEvent.change(screen.getByLabelText('Repeat it'), { target: { value: 'nurse123' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Set lock' }));
+    await waitFor(() => expect(useAppStore.getState().planLockHash).toBeTruthy());
+
+    // Lock now -> the lock screen replaces the plan screen.
+    fireEvent.click(screen.getByRole('button', { name: 'Lock now' }));
+    expect(await screen.findByText('The plan is locked')).toBeTruthy();
+    expect(screen.queryByText('Live preview')).toBeNull();
+
+    // Wrong password shows an error and keeps the gate up.
+    fireEvent.change(screen.getByLabelText('Plan password'), { target: { value: 'wrong' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+    await waitFor(() => expect(screen.getByText(/Wrong password/)).toBeTruthy());
+    expect(useAppStore.getState().planUnlocked).toBe(false);
+
+    // Right password opens the plan again.
+    fireEvent.change(screen.getByLabelText('Plan password'), { target: { value: 'nurse123' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+    await waitFor(() => expect(screen.getByText('Live preview')).toBeTruthy());
+    expect(useAppStore.getState().planUnlocked).toBe(true);
+  });
+});
+
+describe('backlog tab', () => {
+  async function openBacklog() {
+    const state = () => useAppStore.getState();
+    // Backdate the plan by two days so at least one study day is in the past
+    // (works no matter which weekday "today" falls on).
+    state().updatePlan({ startDate: addDays(state().planConfig.startDate, -2) });
+    await waitFor(() =>
+      expect(state().schedule.some((d) => d.type === 'study' && d.date < todayISO())).toBe(true),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: /Revise/ }));
+    await screen.findByText('Due for revision');
+    fireEvent.click(screen.getByRole('button', { name: 'Backlog' }));
+    await screen.findByText('Missed lectures');
+  }
+
+  it('lists missed lectures and can park one on the off day', async () => {
+    await boot();
+    await importDemo();
+    await openBacklog();
+    const state = () => useAppStore.getState();
+
+    const offDay = nextOffDayOnOrAfter(todayISO(), state().planConfig);
+    expect(state().planConfig.offDayLectures).toEqual({});
+    fireEvent.click(screen.getAllByRole('button', { name: /off day/ })[0]);
+
+    await waitFor(() =>
+      expect(Object.keys(state().planConfig.offDayLectures)).toHaveLength(1),
+    );
+    const [movedId, movedDate] = Object.entries(state().planConfig.offDayLectures)[0];
+    expect(movedDate).toBe(offDay);
+    // The off day now shows up as a study day carrying that lecture.
+    const day = state().scheduleByDate.get(movedDate);
+    expect(day?.type).toBe('study');
+    expect(day?.lectureIds).toContain(movedId);
+    // The moved lecture is no longer sitting on a past day (the repacker may
+    // pull a different lecture into the gap - that is expected).
+    const pastIds = state()
+      .schedule.filter((d) => d.type === 'study' && d.date < todayISO())
+      .flatMap((d) => d.lectureIds);
+    expect(pastIds).not.toContain(movedId);
+  });
+
+  it('shifts the schedule from today and opens the next off day for overflow', async () => {
+    await boot();
+    await importDemo();
+    await openBacklog();
+    const state = () => useAppStore.getState();
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Shift schedule' })[0]);
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Shift schedule' }));
+
+    await waitFor(() => expect(state().planConfig.startDate).toBe(todayISO()));
+    expect(state().planConfig.backlogAnchor).toBe(todayISO());
+    // The first off day after today (usually the following Sunday) is now an
+    // open study day in the re-spread plan.
+    const offDay = nextOffDayOnOrAfter(addDays(todayISO(), 1), state().planConfig);
+    expect(offDay).toBeTruthy();
+    const day = state().scheduleByDate.get(offDay!);
+    expect(day?.type).toBe('study');
+  });
+
+  it('can return a lecture from its off day to the plan', async () => {
+    await boot();
+    await importDemo();
+    await openBacklog();
+    const state = () => useAppStore.getState();
+
+    fireEvent.click(screen.getAllByRole('button', { name: /off day/ })[0]);
+    await waitFor(() =>
+      expect(Object.keys(state().planConfig.offDayLectures)).toHaveLength(1),
+    );
+    expect(await screen.findByText('Waiting on off days')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Return to plan' }));
+    await waitFor(() => expect(state().planConfig.offDayLectures).toEqual({}));
   });
 });

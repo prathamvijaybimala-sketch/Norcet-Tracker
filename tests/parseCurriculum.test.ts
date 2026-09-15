@@ -89,7 +89,7 @@ describe('parseCurriculumJSON', () => {
     expect(after.size).toBe(before.size + 2);
   });
 
-  it('keeps lectures with malformed durations (duration 0) instead of dropping them', () => {
+  it('keeps lectures with malformed durations, using the 40-minute default', () => {
     const subjects = parseCurriculumJSON(fixture);
     const cell = subjects[0].topics[1].lectures;
     expect(cell.map((l) => l.name)).toEqual([
@@ -99,9 +99,18 @@ describe('parseCurriculumJSON', () => {
       'Missing Duration',
       'Odd Format',
     ]);
-    expect(cell[2].durationSec).toBe(0);
-    expect(cell[3].durationSec).toBe(0);
+    // Broken ("n/a") and missing (no field) durations default to 40 minutes
+    // so the scheduler still allocates realistic time for them.
+    expect(cell[2].durationSec).toBe(40 * 60);
+    expect(cell[3].durationSec).toBe(40 * 60);
     expect(cell[4].durationSec).toBe(4800);
+  });
+
+  it('reports the 40-minute default in the warning text', () => {
+    const { warnings } = parseCurriculumDetailed(fixture);
+    const bad = warnings.filter((w) => w.kind === 'bad-duration');
+    expect(bad.length).toBeGreaterThanOrEqual(2);
+    for (const w of bad) expect(w.message).toContain('40-minute default');
   });
 
   it('reports warnings for bad durations, empty topics and duplicate names', () => {

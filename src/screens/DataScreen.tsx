@@ -17,6 +17,8 @@ export function DataScreen() {
   const exportData = useAppStore((s) => s.exportData);
   const applyBackup = useAppStore((s) => s.applyBackup);
   const resetEverything = useAppStore((s) => s.resetEverything);
+  const planLockHash = useAppStore((s) => s.planLockHash);
+  const clearPlanPassword = useAppStore((s) => s.clearPlanPassword);
   const setRoute = useAppStore((s) => s.setRoute);
   const notify = useAppStore((s) => s.notify);
 
@@ -143,9 +145,16 @@ export function DataScreen() {
           Clears the curriculum, plan, progress and revision queue from this device. Export first if
           you are not sure.
         </p>
-        <button className="btn danger" onClick={() => setConfirmReset(true)}>
-          Erase all local data
-        </button>
+        <div className="row wrap" style={{ gap: 8 }}>
+          <button className="btn danger" onClick={() => setConfirmReset(true)}>
+            Erase all local data
+          </button>
+          {planLockHash ? (
+            <button className="btn" onClick={() => clearPlanPassword()}>
+              Remove plan lock
+            </button>
+          ) : null}
+        </div>
       </div>
 
       {pending ? (

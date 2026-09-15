@@ -7,6 +7,13 @@
  * curriculum content).
  */
 
+/**
+ * Lectures whose duration is missing / null / unreadable are assumed to be
+ * this long (the curriculum's average lecture is ~40 min). Used by the
+ * scheduler so unknown-length lectures still consume realistic daily capacity.
+ */
+export const DEFAULT_LECTURE_DURATION_SEC = 40 * 60;
+
 const HH_MM_SS = /^\s*(\d+)\s*:\s*(\d{1,2})\s*:\s*(\d{1,2})\s*$/;
 const MM_SS = /^\s*(\d+)\s*:\s*(\d{1,2})\s*$/;
 const HMS_LABELLED = /(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s*(?:(\d+)\s*s)?/i;

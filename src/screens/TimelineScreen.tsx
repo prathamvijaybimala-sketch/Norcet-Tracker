@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../store/appStore';
-import { LectureRow } from '../components/LectureRow';
+import { TopicSection } from '../components/TopicSection';
 import { Modal, EmptyState, ProgressBar } from '../components/ui';
 import { dayCompletion, dayStatus } from '../lib/stats';
 import { subjectColor } from '../lib/colors';
@@ -20,6 +20,7 @@ export function TimelineScreen() {
   const scheduleByDate = useAppStore((s) => s.scheduleByDate);
   const progress = useAppStore((s) => s.progress);
   const lectureIndex = useAppStore((s) => s.lectureIndex);
+  const theme = useAppStore((s) => s.theme);
   const [selected, setSelected] = useState<string | null>(null);
   const today = todayISO();
   const todayRef = useRef<HTMLDivElement>(null);
@@ -82,9 +83,14 @@ export function TimelineScreen() {
           <Legend color="var(--ok)" label="completed" />
           <Legend color="var(--accent)" label="partly done / today" />
           <Legend color="var(--warn)" label="missed" />
-          <Legend color="transparent" label="buffer" buffer />
+          <Legend color="transparent" label="rest day" buffer />
           <Legend color="transparent" label="leave" leave />
           <Legend color="transparent" label="off day" />
+        </div>
+        <div className="tiny faint" style={{ marginTop: 8 }}>
+          <b>Off days</b> are only the weekdays you excluded (like Sunday) and leave days.{' '}
+          <b>Rest days</b> are the buffer you planned after each subject - they count calendar
+          days, so they may land on a weekday. That is the buffer working, not a broken off day.
         </div>
       </div>
 
@@ -106,8 +112,20 @@ export function TimelineScreen() {
             {month.cells.map((day, i) => {
               if (!day) return <div className="day-cell blank" key={i} />;
               const status = dayStatus(day, progress, today);
-              const color = day.subjectId ? subjectColor(day.subjectId) : null;
+              const color = day.subjectId ? subjectColor(day.subjectId, theme) : null;
               const isToday = day.date === today;
+              const title =
+                day.type === 'buffer'
+                  ? `${formatDate(day.date)} · rest day (buffer)${
+                      day.subjectName ? ` after ${day.subjectName}` : ''
+                    }`
+                  : day.type === 'off'
+                    ? `${formatDate(day.date)} · off day${
+                        day.isLeaveDay ? ' (leave)' : ' (not a study day)'
+                      }`
+                    : `${formatDate(day.date)} · study day${
+                        day.subjectName ? ` · ${day.subjectName}` : ''
+                      }`;
               return (
                 <button
                   key={day.date}
@@ -120,15 +138,13 @@ export function TimelineScreen() {
                       : undefined
                   }
                   onClick={() => day.type === 'study' && setSelected(day.date)}
-                  title={`${formatDate(day.date)} · ${day.type}${
-                    day.subjectName ? ` · ${day.subjectName}` : ''
-                  }`}
+                  title={title}
                 >
                   <span>{parseISODate(day.date).getDate()}</span>
                   {day.type === 'study' ? (
                     <span className="cell-count">{day.lectureIds.length}</span>
                   ) : day.type === 'buffer' ? (
-                    <span className="cell-count">buf</span>
+                    <span className="cell-count">rest</span>
                   ) : day.isLeaveDay ? (
                     <span className="cell-count">off</span>
                   ) : null}
@@ -155,7 +171,7 @@ export function TimelineScreen() {
               {selectedDay.type === 'study'
                 ? `${selectedDay.lectureIds.length} lectures · ${formatDuration(selectedDay.plannedSec)} planned`
                 : selectedDay.type === 'buffer'
-                  ? 'Buffer day - no new lectures'
+                  ? 'Rest day (buffer) - no new lectures'
                   : 'Off day'}
             </span>
             <span>
@@ -174,9 +190,7 @@ export function TimelineScreen() {
           <div className="tiny faint" style={{ marginBottom: 8 }}>
             Checkboxes work on any day, past or future - logging progress retroactively is normal.
           </div>
-          {selectedDay.lectureIds.map((id) => (
-            <LectureRow key={id} lectureId={id} />
-          ))}
+          <TopicSection lectureIds={selectedDay.lectureIds} />
         </Modal>
       ) : null}
     </div>

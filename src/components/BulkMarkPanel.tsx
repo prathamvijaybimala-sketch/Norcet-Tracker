@@ -20,6 +20,7 @@ export function BulkMarkPanel() {
   const planConfig = useAppStore((s) => s.planConfig);
   const bulkMark = useAppStore((s) => s.bulkMark);
   const setFlag = useAppStore((s) => s.setFlag);
+  const theme = useAppStore((s) => s.theme);
 
   const [subjectId, setSubjectId] = useState<string>('');
   const [openTopic, setOpenTopic] = useState<string | null>(null);
@@ -50,7 +51,7 @@ export function BulkMarkPanel() {
     return <div className="empty small">Import a curriculum first.</div>;
   }
 
-  const color = subjectColor(subject.id);
+  const color = subjectColor(subject.id, theme);
   const needle = query.trim().toLowerCase();
 
   return (

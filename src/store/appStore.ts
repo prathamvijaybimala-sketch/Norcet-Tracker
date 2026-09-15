@@ -17,7 +17,14 @@ import type {
 } from '../types';
 import { todayISO } from '../lib/dates';
 import { buildLectureIndex, parseCurriculumDetailed, subjectStats, type LectureRef } from '../lib/parseCurriculum';
-import { catchUpPlan, generateSchedule, indexScheduleByDate, indexScheduleByLecture } from '../lib/schedule';
+import {
+  catchUpPlan,
+  generateSchedule,
+  indexScheduleByDate,
+  indexScheduleByLecture,
+  nextOffDayOnOrAfter,
+  nextStudyDateOnOrAfter,
+} from '../lib/schedule';
 import { suggestBufferForSubject } from '../lib/buffer';
 import {
   DEFAULT_REVISION_INTERVALS,
@@ -26,7 +33,8 @@ import {
   syncRevisionQueue,
 } from '../lib/revision';
 import { defaultPlanConfig, downloadJSON, buildExportPayload, exportFileName, normalizePlanConfig } from '../lib/exportImport';
-import { clearAll, flushWrites, loadAll, saveKeyDebounced } from '../lib/storage';
+import { hashPlanPassword, MIN_LOCK_LENGTH, sameHash } from '../lib/lock';
+import { clearAll, flushWrites, loadAll, normalizeSettings, saveKeyDebounced } from '../lib/storage';
 import { KEYS } from '../lib/storage';
 
 export type ProgressFlag = 'lectureWatched' | 'notesDone' | 'questionsDone';
@@ -65,6 +73,12 @@ export type AppState = {
   revision: RevisionStore;
   versions: Versions;
   toast: { id: number; message: string } | null;
+  /** Per-device theme (persisted outside the export payload). */
+  theme: 'dark' | 'light';
+  /** Hash of the plan-screen password, or null when the plan is not locked. */
+  planLockHash: string | null;
+  /** Session-only: true after the plan screen has been unlocked this launch. */
+  planUnlocked: boolean;
 } & Derived;
 
 type Actions = {
@@ -99,6 +113,22 @@ type Actions = {
   reviewLecture: (lectureId: string) => void;
   skipLectureReview: (lectureId: string) => void;
   removeRevision: (lectureId: string) => void;
+
+  /** Backlog: move a missed lecture onto an off day (defaults to the next one). */
+  moveLectureToOffDay: (lectureId: string, date?: string) => void;
+  /** Backlog: take a lecture back off its off day into the normal queue. */
+  returnLectureFromOffDay: (lectureId: string) => void;
+  /** Backlog: re-spread the plan from today, opening the next off day for overflow. */
+  shiftScheduleFromBacklog: () => void;
+  /** Topic-level "Questions" checkbox: tick / untick every lecture of a topic. */
+  setTopicQuestions: (topicId: string, value: boolean) => void;
+
+  /** Per-device preferences. */
+  setTheme: (theme: 'dark' | 'light') => void;
+  setPlanPassword: (password: string) => Promise<boolean>;
+  checkPlanPassword: (password: string) => Promise<boolean>;
+  clearPlanPassword: () => void;
+  lockPlan: () => void;
 
   exportData: () => Promise<void>;
   applyBackup: (state: {
@@ -172,10 +202,11 @@ let hydrated = false;
 export const useAppStore = create<AppState & Actions>((set, get) => {
   /** Persist whichever slices changed since the last save. */
   let lastSaved: Versions = { curriculum: -1, plan: -1, progress: -1, revision: -1 };
+  let settingsDirty = true; // first launch: write the defaults
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
   const persist = () => {
-    const { versions, curriculum, planConfig, progress, revision } = get();
+    const { versions, curriculum, planConfig, progress, revision, theme, planLockHash } = get();
     if (versions.curriculum !== lastSaved.curriculum) {
       saveKeyDebounced(KEYS.curriculum, curriculum);
     }
@@ -187,6 +218,10 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
     }
     if (versions.revision !== lastSaved.revision) {
       saveKeyDebounced(KEYS.revision, revision);
+    }
+    if (settingsDirty) {
+      saveKeyDebounced(KEYS.settings, { theme, planLockHash });
+      settingsDirty = false;
     }
     lastSaved = { ...versions };
   };
@@ -229,6 +264,9 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
     revision: {},
     versions: { curriculum: 0, plan: 0, progress: 0, revision: 0 },
     toast: null,
+    theme: 'dark',
+    planLockHash: null,
+    planUnlocked: false,
     ...EMPTY_DERIVED,
 
     async init() {
@@ -243,8 +281,10 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
         : defaultPlanConfig(todayISO(), curriculum.map((s) => s.id));
       const progress = stored.progress && typeof stored.progress === 'object' ? stored.progress : {};
       const revision = stored.revision && typeof stored.revision === 'object' ? stored.revision : {};
+      const settings = normalizeSettings(stored.settings);
 
       lastSaved = { curriculum: 0, plan: 0, progress: 0, revision: 0 };
+      settingsDirty = false; // just read it; nothing to write back yet
       set({
         ready: true,
         route: curriculum.length ? 'today' : 'import',
@@ -252,6 +292,9 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
         planConfig,
         progress,
         revision,
+        theme: settings.theme,
+        planLockHash: settings.planLockHash,
+        planUnlocked: false, // the plan re-locks on every app launch
         versions: { curriculum: curriculum.length ? 1 : 0, plan: 1, progress: 1, revision: 1 },
         ...derive(curriculum, planConfig, progress),
       });
@@ -321,7 +364,14 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
     },
 
     updatePlan(patch) {
-      commit({ planConfig: { ...get().planConfig, ...patch } }, { plan: true });
+      // Manually moving the start date invalidates a previous "shift the
+      // schedule" anchor (its overflow day no longer means anything), unless
+      // the caller sets a fresh anchor in the same patch.
+      const next = { ...get().planConfig, ...patch };
+      if (patch.startDate !== undefined && patch.backlogAnchor === undefined) {
+        next.backlogAnchor = null;
+      }
+      commit({ planConfig: next }, { plan: true });
     },
 
     setSubjectOrder(order) {
@@ -396,8 +446,60 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
         get().notify('Nothing to catch up - the plan already starts today or later.');
         return;
       }
+      // Pass backlogAnchor through untouched: catchUpPlan anchors the shift.
       get().updatePlan(next);
       get().notify(`Plan restarted from today. ${next.leaveDates.length} future leave days kept.`);
+    },
+
+    moveLectureToOffDay(lectureId, date) {
+      const { planConfig } = get();
+      let target = date && date >= planConfig.startDate ? date : null;
+      if (!target) {
+        target = nextOffDayOnOrAfter(todayISO(), planConfig, 60);
+        if (!target) {
+          get().notify('No off day found - your plan currently studies every weekday.');
+          return;
+        }
+      }
+      const { offDayLectures } = planConfig;
+      get().updatePlan({ offDayLectures: { ...offDayLectures, [lectureId]: target } });
+      get().notify(`Lecture moved to ${target} (off day). It will be waiting for you there.`);
+    },
+
+    returnLectureFromOffDay(lectureId) {
+      const { offDayLectures } = get().planConfig;
+      if (!(lectureId in offDayLectures)) return;
+      const next = { ...offDayLectures };
+      delete next[lectureId];
+      get().updatePlan({ offDayLectures: next });
+      get().notify('Lecture returned to the normal plan.');
+    },
+
+    shiftScheduleFromBacklog() {
+      const { planConfig } = get();
+      const today = todayISO();
+      const anchor = nextStudyDateOnOrAfter(today, planConfig);
+      get().updatePlan({
+        startDate: anchor,
+        backlogAnchor: anchor,
+        // Past leave days can no longer shift anything.
+        leaveDates: planConfig.leaveDates.filter((d) => d >= anchor),
+      });
+      get().notify(
+        `Schedule shifted from ${anchor}. The next off day is open for the extra lecture.`,
+      );
+    },
+
+    setTopicQuestions(topicId, value) {
+      const { curriculum } = get();
+      const ids: string[] = [];
+      for (const subject of curriculum) {
+        for (const topic of subject.topics) {
+          if (topic.id === topicId) for (const l of topic.lectures) ids.push(l.id);
+        }
+      }
+      if (!ids.length) return;
+      get().bulkMark(ids, { questionsDone: value });
     },
 
     setFlag(lectureId, flag, value) {
@@ -495,6 +597,46 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
       commit({ revision: next }, { revision: true });
     },
 
+    setTheme(theme) {
+      set({ theme });
+      settingsDirty = true;
+      persist();
+      if (typeof document !== 'undefined') {
+        document.documentElement.dataset.theme = theme;
+      }
+    },
+
+    async setPlanPassword(password) {
+      if (password.length < MIN_LOCK_LENGTH) return false;
+      const hash = await hashPlanPassword(password);
+      set({ planLockHash: hash, planUnlocked: true });
+      settingsDirty = true;
+      persist();
+      return true;
+    },
+
+    async checkPlanPassword(password) {
+      const stored = get().planLockHash;
+      if (!stored) {
+        // No lock set - nothing to check (the caller shows the setup card).
+        return true;
+      }
+      const hash = await hashPlanPassword(password);
+      const ok = sameHash(hash, stored);
+      if (ok) set({ planUnlocked: true });
+      return ok;
+    },
+
+    clearPlanPassword() {
+      set({ planLockHash: null, planUnlocked: false });
+      settingsDirty = true;
+      persist();
+    },
+
+    lockPlan() {
+      set({ planUnlocked: false });
+    },
+
     async exportData() {
       // Flush first so the file always contains the very latest state.
       await flushWrites();
@@ -517,6 +659,7 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
       await clearAll();
       const today = todayISO();
       lastSaved = { curriculum: -1, plan: -1, progress: -1, revision: -1 };
+      settingsDirty = true; // rewrite the default settings
       set({
         curriculum: [],
         planConfig: defaultPlanConfig(today),
@@ -524,8 +667,12 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
         revision: {},
         versions: { curriculum: 0, plan: 0, progress: 0, revision: 0 },
         route: 'import',
+        theme: 'dark',
+        planLockHash: null,
+        planUnlocked: false,
         ...EMPTY_DERIVED,
       });
+      if (typeof document !== 'undefined') document.documentElement.dataset.theme = 'dark';
       if (typeof window !== 'undefined') window.location.hash = '#/import';
     },
   };

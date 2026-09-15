@@ -7,6 +7,7 @@ import { TimelineScreen } from './screens/TimelineScreen';
 import { RevisionScreen } from './screens/RevisionScreen';
 import { DataScreen } from './screens/DataScreen';
 import { Toast } from './components/ui';
+import { PlanLockScreen } from './components/PlanLockScreen';
 import { computePlanStats } from './lib/stats';
 import { dueRevisions } from './lib/revision';
 import { formatDate, todayISO } from './lib/dates';
@@ -25,9 +26,18 @@ export default function App() {
   const schedule = useAppStore((s) => s.schedule);
   const revision = useAppStore((s) => s.revision);
   const toast = useAppStore((s) => s.toast);
+  const theme = useAppStore((s) => s.theme);
+  const setTheme = useAppStore((s) => s.setTheme);
+  const planLockHash = useAppStore((s) => s.planLockHash);
+  const planUnlocked = useAppStore((s) => s.planUnlocked);
   const init = useAppStore((s) => s.init);
   const setRoute = useAppStore((s) => s.setRoute);
   const dismissToast = useAppStore((s) => s.dismissToast);
+
+  // Reflect the theme on <html> (CSS variables swap per [data-theme]).
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
 
   useEffect(() => {
     void init().then(() => {
@@ -61,6 +71,16 @@ export default function App() {
             <div>ends {formatDate(stats.finishDate)}</div>
           </div>
         ) : null}
+        {ready ? (
+          <button
+            className="icon-btn"
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+          >
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
+        ) : null}
       </header>
 
       {!ready ? (
@@ -70,7 +90,11 @@ export default function App() {
       ) : effectiveRoute === 'import' ? (
         <ImportScreen />
       ) : effectiveRoute === 'setup' || effectiveRoute === 'subjects' ? (
-        <PlanScreen />
+        planLockHash && !planUnlocked ? (
+          <PlanLockScreen />
+        ) : (
+          <PlanScreen />
+        )
       ) : effectiveRoute === 'timeline' ? (
         <TimelineScreen />
       ) : effectiveRoute === 'revision' ? (

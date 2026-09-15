@@ -1,4 +1,5 @@
-/* NORCET Study Tracker - single stylesheet, mobile-first dark theme. */
+/* NORCET Study Tracker - single stylesheet, mobile-first, dark theme by
+   default with a light theme via [data-theme='light'] on <html>. */
 
 :root {
   color-scheme: dark;
@@ -6,12 +7,16 @@
   --bg: #0d1014;
   --bg-elev: #14181e;
   --bg-elev-2: #1a1f27;
+  --bg-hover: #212836;
   --bg-input: #0f1419;
   --border: #262d38;
   --border-strong: #333c4a;
   --text: #e8ecf2;
   --text-dim: #9aa6b8;
   --text-faint: #6b7686;
+  --header-bg: rgba(13, 16, 20, 0.92);
+  --nav-bg: rgba(13, 16, 20, 0.96);
+  --backdrop: rgba(6, 8, 11, 0.7);
 
   --accent: #6d8cff;
   --accent-soft: rgba(109, 140, 255, 0.14);
@@ -19,10 +24,13 @@
 
   --ok: #3ecf8e;
   --ok-soft: rgba(62, 207, 142, 0.14);
+  --ok-text: #9df0c8;
   --warn: #f5b544;
   --warn-soft: rgba(245, 181, 68, 0.14);
+  --warn-text: #ffd791;
   --danger: #ff6b6b;
   --danger-soft: rgba(255, 107, 107, 0.14);
+  --danger-text: #ffb3b3;
 
   --radius: 12px;
   --radius-sm: 8px;
@@ -37,6 +45,42 @@
   font-synthesis-weight: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+}
+
+/* -------------------------------- light mode ---------------------------- */
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #f3f5f9;
+  --bg-elev: #ffffff;
+  --bg-elev-2: #edf0f6;
+  --bg-hover: #e2e7f0;
+  --bg-input: #ffffff;
+  --border: #d8dfe9;
+  --border-strong: #b9c4d6;
+  --text: #1d2532;
+  --text-dim: #4d5c74;
+  --text-faint: #7d8ba0;
+  --header-bg: rgba(243, 245, 249, 0.92);
+  --nav-bg: rgba(243, 245, 249, 0.96);
+  --backdrop: rgba(23, 30, 44, 0.45);
+
+  --accent: #3b62e8;
+  --accent-soft: rgba(59, 98, 232, 0.1);
+  --accent-text: #2f4fc0;
+
+  --ok: #178a56;
+  --ok-soft: rgba(23, 138, 86, 0.1);
+  --ok-text: #146c44;
+  --warn: #a86e06;
+  --warn-soft: rgba(245, 181, 68, 0.22);
+  --warn-text: #8a5c04;
+  --danger: #d64545;
+  --danger-soft: rgba(255, 107, 107, 0.12);
+  --danger-text: #b23636;
+
+  --shadow: 0 8px 28px rgba(30, 41, 59, 0.12);
 }
 
 * {
@@ -100,7 +144,7 @@ h4 {
   gap: 10px;
   height: var(--header-h);
   padding: 0 14px;
-  background: rgba(13, 16, 20, 0.92);
+  background: var(--header-bg);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border);
 }
@@ -152,7 +196,7 @@ h4 {
   z-index: 30;
   height: var(--nav-h);
   display: flex;
-  background: rgba(13, 16, 20, 0.96);
+  background: var(--nav-bg);
   backdrop-filter: blur(12px);
   border-top: 1px solid var(--border);
   padding-bottom: env(safe-area-inset-bottom);
@@ -308,7 +352,7 @@ h4 {
 }
 
 .btn:hover {
-  background: #212836;
+  background: var(--bg-hover);
 }
 
 .btn:active {
@@ -743,12 +787,14 @@ textarea {
 }
 
 .day-cell.buffer {
+  background-color: var(--warn-soft);
   background-image: repeating-linear-gradient(
     45deg,
-    rgba(245, 181, 68, 0.18) 0 4px,
+    rgba(245, 181, 68, 0.3) 0 4px,
     transparent 4px 8px
   );
-  border-color: rgba(245, 181, 68, 0.35);
+  border-color: rgba(245, 181, 68, 0.55);
+  color: var(--warn);
 }
 
 .day-cell.leave {
@@ -800,7 +846,7 @@ textarea {
   position: fixed;
   inset: 0;
   z-index: 50;
-  background: rgba(6, 8, 11, 0.7);
+  background: var(--backdrop);
   display: flex;
   align-items: flex-end;
   justify-content: center;
@@ -949,7 +995,7 @@ textarea {
 .warn-box {
   background: var(--warn-soft);
   border: 1px solid rgba(245, 181, 68, 0.35);
-  color: #ffd791;
+  color: var(--warn-text);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   font-size: 13px;
@@ -958,7 +1004,7 @@ textarea {
 .err-box {
   background: var(--danger-soft);
   border: 1px solid rgba(255, 107, 107, 0.35);
-  color: #ffb3b3;
+  color: var(--danger-text);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   font-size: 13px;
@@ -967,7 +1013,7 @@ textarea {
 .ok-box {
   background: var(--ok-soft);
   border: 1px solid rgba(62, 207, 142, 0.3);
-  color: #9df0c8;
+  color: var(--ok-text);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   font-size: 13px;
@@ -993,4 +1039,128 @@ textarea {
   .modal {
     border-radius: var(--radius-lg);
   }
+}
+
+/* ----------------------------- icon button ------------------------------ */
+
+.icon-btn {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--bg-elev-2);
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.icon-btn:hover {
+  background: var(--bg-hover);
+}
+
+/* ------------------------------ greeting box ---------------------------- */
+
+.greeting-card {
+  background: linear-gradient(135deg, var(--accent-soft), transparent 65%), var(--bg-elev);
+}
+
+.greeting-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.greeting-line {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.greeting-edit {
+  background: none;
+  border: 0;
+  padding: 0 3px;
+  font-size: 13px;
+  opacity: 0.75;
+  vertical-align: 2px;
+}
+
+.greeting-edit:hover {
+  opacity: 1;
+}
+
+.greeting-sub {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin-top: 3px;
+}
+
+.greeting-quote {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  font-size: 13px;
+  font-style: italic;
+  color: var(--text-dim);
+}
+
+/* -------------------------------- plan lock ----------------------------- */
+
+.lock-card {
+  text-align: center;
+}
+
+.lock-icon {
+  font-size: 34px;
+  margin-bottom: 6px;
+}
+
+.lock-card h2 {
+  font-size: 18px;
+  margin-bottom: 6px;
+}
+
+.lock-card input {
+  text-align: center;
+  margin-top: 14px;
+}
+
+.lock-card .btn {
+  margin-top: 10px;
+}
+
+/* ------------------------------ topic groups ---------------------------- */
+
+.topic-block {
+  padding: 7px 0 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.topic-block:last-child {
+  border-bottom: 0;
+}
+
+.topic-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 0;
+}
+
+.topic-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+}
+
+.topic-head .check {
+  flex: 0 0 auto;
 }

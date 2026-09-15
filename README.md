@@ -15,7 +15,7 @@ requires manual re-planning.
 ```bash
 npm install
 npm run dev      # http://localhost:5173
-npm test         # 63 unit + integration + UI tests
+npm test         # 85 unit + integration + UI tests
 npm run build    # type-check + production bundle in dist/
 npm run demo     # regenerate public/demo-curriculum.json
 ```
@@ -23,13 +23,23 @@ npm run demo     # regenerate public/demo-curriculum.json
 ## Quick start in the app
 
 1. **Import** — upload your curriculum JSON (or paste it, or hit *Load demo curriculum* to try it
-   with a realistic 767-lecture / 516-hour sample).
+   with a realistic 767-lecture / 516-hour sample). Lectures with a missing or unreadable duration
+   default to 40 minutes, so nothing is silently scheduled for zero time.
 2. **Plan** — drag subjects into study order, set daily hours, study days, playback speed and start
-   date. The finish-date preview updates as you type.
-3. **Today** — the day's lectures with three independent checkboxes: watched / notes / questions.
+   date. The finish-date preview updates as you type. Set a password lock here (with confirmation)
+   so the plan cannot be changed on a whim: the tab asks for it on every app launch.
+3. **Today** — a greeting box (time-of-day greeting + your name + a rotating quote), then the
+   day's lectures grouped by topic. Each lecture has two checkboxes (Lecture / Notes); the
+   Questions checkbox sits once per topic and ticks the whole topic.
 4. **Timeline** — the whole plan as a calendar; tap any day (past or future) to tick things off.
-5. **Revise** — a spaced-repetition queue that is completely separate from the schedule.
+   Off days are only your excluded weekdays and leave days; the striped *rest days* are the
+   buffer you planned after each subject (they count calendar days, so they can land on a weekday).
+5. **Revise** — two tabs: *Revision* (a spaced-repetition queue that is completely separate from
+   the schedule) and *Backlog* (missed lectures: park one on the next off day — usually Sunday —
+   or shift the whole week, which opens the next off day for the extra lecture).
 6. **Data** — export one JSON file with everything in it, or restore one.
+
+Dark and light modes are available from the ☀️/ button in the header.
 
 ## Architecture
 
@@ -40,17 +50,19 @@ src/
     parseCurriculum.ts  parseCurriculumJSON() - pure importer, stable id generation
     duration.ts         defensive HH:MM:SS parsing
     dates.ts            local-timezone YYYY-MM-DD helpers
-    schedule.ts         generateSchedule() - the core engine (pure)
+    schedule.ts         generateSchedule() - the core engine (pure); off-day backlog moves
     stats.ts            derived numbers: plan summary, days ahead/behind, completion
     buffer.ts           buffer auto-suggestion heuristic
     revision.ts         spaced-repetition queue (pure)
+    lock.ts             plan-screen password hashing (WebCrypto SHA-256 + fallback)
     exportImport.ts     backup payload + schema validation
     storage.ts          IndexedDB (idb) with debounced writes + localStorage fallback
-    colors.ts           stable per-subject colours
-  store/appStore.ts     zustand store: 3 persisted slices + derived schedule
-  screens/              Import, Plan, Today, Timeline, Revision, Data
-  components/           LectureRow, SubjectOrderList, PaceControls, BulkMarkPanel, LeaveManager…
-tests/                  parser, scheduler, revision, integration (spec §8.2), UI smoke tests
+    colors.ts           stable per-subject colours (theme aware)
+  store/appStore.ts     zustand store: 3 persisted slices + settings (theme/lock) + derived schedule
+  screens/              Import, Plan (password-locked), Today, Timeline, Revision (+Backlog), Data
+  components/           LectureRow, TopicSection, PlanLockScreen, SubjectOrderList,
+                        PaceControls, BulkMarkPanel, LeaveManager…
+tests/                  parser, scheduler, backlog, lock, revision, integration (spec §8.2), UI smoke tests
 ```
 
 ### The one rule that matters

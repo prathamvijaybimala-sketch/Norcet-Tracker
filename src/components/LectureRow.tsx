@@ -4,13 +4,14 @@ import { formatClock, formatDuration } from '../lib/duration';
 import { subjectColor } from '../lib/colors';
 
 const FLAGS: { key: ProgressFlag; label: string }[] = [
-  { key: 'lectureWatched', label: 'Watched' },
+  { key: 'lectureWatched', label: 'Lecture' },
   { key: 'notesDone', label: 'Notes' },
-  { key: 'questionsDone', label: 'Questions' },
 ];
 
 /**
- * One lecture with its three INDEPENDENT checkboxes.
+ * One lecture with its two INDEPENDENT checkboxes: "Lecture" (watched) and
+ * "Notes". MCQ practice is tracked per TOPIC, not per lecture - see
+ * `TopicSection`, which renders the single "Questions" checkbox per topic.
  *
  * Subscribes only to its own progress record, so ticking a box re-renders this
  * row and the schedule - never the whole list (and never with a page reload or
@@ -30,6 +31,7 @@ export const LectureRow = memo(function LectureRow({
   const speed = useAppStore((s) => s.planConfig.playbackSpeed);
   const scheduledDate = useAppStore((s) => s.scheduleByLecture.get(lectureId));
   const setFlag = useAppStore((s) => s.setFlag);
+  const theme = useAppStore((s) => s.theme);
 
   const onToggle = useCallback(
     (flag: ProgressFlag) => (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -43,7 +45,7 @@ export const LectureRow = memo(function LectureRow({
   if (!ref) return null;
 
   const effSec = ref.lecture.durationSec / (speed > 0 ? speed : 1);
-  const color = subjectColor(ref.subject.id);
+  const color = subjectColor(ref.subject.id, theme);
   const done = Boolean(progress?.lectureWatched);
 
   return (

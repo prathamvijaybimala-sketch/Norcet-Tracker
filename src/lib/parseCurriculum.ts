@@ -7,7 +7,7 @@
  */
 
 import type { Lecture, Subject, Topic } from '../types';
-import { parseDuration } from './duration';
+import { DEFAULT_LECTURE_DURATION_SEC, parseDuration } from './duration';
 import { createIdFactory, slugify } from './id';
 
 export type ParseWarningKind =
@@ -156,8 +156,12 @@ export function parseCurriculumDetailed(raw: string | unknown): ParseResult {
           });
         }
 
-        const durationSec = parseDuration(rawLecture.duration);
-        if (durationSec === 0) {
+        const parsed = parseDuration(rawLecture.duration);
+        // Missing / null / unreadable / zero durations default to 40 minutes
+        // (the curriculum's average lecture length) so the schedule still
+        // allocates realistic time for them.
+        const durationSec = parsed > 0 ? parsed : DEFAULT_LECTURE_DURATION_SEC;
+        if (parsed <= 0) {
           warnings.push({
             kind: 'bad-duration',
             subject: subjectName,
@@ -165,7 +169,7 @@ export function parseCurriculumDetailed(raw: string | unknown): ParseResult {
             lecture: lectureName,
             message: `"${lectureName}" has a missing or unreadable duration (${String(
               rawLecture.duration,
-            )}); treated as 0 minutes.`,
+            )}); using the ${DEFAULT_LECTURE_DURATION_SEC / 60}-minute default.`,
           });
         }
 

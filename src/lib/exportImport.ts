@@ -140,6 +140,13 @@ export function normalizePlanConfig(plan: Record<string, unknown>): PlanConfig {
       Array.isArray(plan.revisionIntervals) && plan.revisionIntervals.length
         ? (plan.revisionIntervals as number[])
         : [...DEFAULT_REVISION_INTERVALS],
+    studentName: typeof plan.studentName === 'string' ? plan.studentName : '',
+    offDayLectures: isObject(plan.offDayLectures)
+      ? (Object.fromEntries(
+          Object.entries(plan.offDayLectures).filter(([, v]) => typeof v === 'string'),
+        ) as Record<string, string>)
+      : {},
+    backlogAnchor: typeof plan.backlogAnchor === 'string' ? plan.backlogAnchor : null,
   };
 }
 
@@ -154,6 +161,9 @@ export function defaultPlanConfig(startDate: string, subjectOrder: string[] = []
     startDate,
     bufferCountsOffDays: true,
     revisionIntervals: [...DEFAULT_REVISION_INTERVALS],
+    studentName: '',
+    offDayLectures: {},
+    backlogAnchor: null,
   };
 }
 

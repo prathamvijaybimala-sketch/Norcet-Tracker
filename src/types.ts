@@ -70,6 +70,26 @@ export type PlanConfig = {
    * travels inside the standard export/import payload.
    */
   revisionIntervals: number[];
+
+  /** Student's name, used in the greeting box. Empty = no name shown. */
+  studentName: string;
+
+  /**
+   * Missed lectures explicitly moved to an off day (Backlog feature):
+   * lectureId -> ISO `YYYY-MM-DD` of the off day (usually Sunday) on which the
+   * lecture will be watched. Such lectures leave the normal packing queue and
+   * are scheduled on the given off day, which then renders as a study day.
+   */
+  offDayLectures: Record<string, string>;
+
+  /**
+   * When set, this date is the anchor of a "shift the schedule" catch-up
+   * (Backlog feature): the plan is re-spread from it, and the FIRST off day
+   * after the anchor (usually the following Sunday) is opened as an extra
+   * study day that absorbs the week's overflow lecture. Stays fixed until the
+   * user shifts / catches up again.
+   */
+  backlogAnchor: string | null;
 };
 
 /** ---------- 2.3 Progress (the source of truth) ---------- */

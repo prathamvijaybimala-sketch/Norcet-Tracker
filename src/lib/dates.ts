@@ -33,6 +33,12 @@ export function todayISO(now: Date = new Date()): string {
   return toISODate(now);
 }
 
+/** 1-based day of the year (for rotating quotes / greetings). */
+export function dayOfYear(now: Date = new Date()): number {
+  const start = new Date(now.getFullYear(), 0, 0).getTime();
+  return Math.floor((now.getTime() - start) / 86_400_000);
+}
+
 export function addDays(iso: string, days: number): string {
   const d = parseISODate(iso);
   d.setDate(d.getDate() + days);

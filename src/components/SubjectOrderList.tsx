@@ -20,6 +20,7 @@ export function SubjectOrderList() {
   const setSubjectIncluded = useAppStore((s) => s.setSubjectIncluded);
   const setBuffer = useAppStore((s) => s.setBuffer);
   const updatePlan = useAppStore((s) => s.updatePlan);
+  const theme = useAppStore((s) => s.theme);
 
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
@@ -38,7 +39,7 @@ export function SubjectOrderList() {
       {included.map((id, index) => {
         const subject = byId.get(id)!;
         const stats = subjectStats(subject);
-        const color = subjectColor(id);
+        const color = subjectColor(id, theme);
         const buffer = planConfig.bufferDaysBySubject[id] ?? 0;
         const suggested = suggestBufferForSubject(stats.totalSec, planConfig.playbackSpeed);
         return (

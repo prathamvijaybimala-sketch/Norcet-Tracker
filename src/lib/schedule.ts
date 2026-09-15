@@ -70,8 +70,29 @@ export function generateSchedule(
   const leaveSet = new Set(planConfig.leaveDates);
   const studyDaySet = new Set(planConfig.studyDays);
 
+  const isNonStudyWeekday = (date: string): boolean => !studyDaySet.has(weekdayOf(date));
+
+  /**
+   * "Shift the schedule" catch-up (planConfig.backlogAnchor, set by the
+   * Backlog feature): the FIRST genuine off day after the anchor — a
+   * non-study weekday that is not a leave day, so usually the following
+   * Sunday — is opened as one extra study day. It absorbs the week's
+   * overflow lecture; after it, the plan continues on regular study days.
+   */
+  let overflowDate = '';
+  if (planConfig.backlogAnchor && planConfig.backlogAnchor >= start) {
+    let cursor = planConfig.backlogAnchor;
+    for (let i = 0; i < 4000; i++) {
+      cursor = addDays(cursor, 1);
+      if (isNonStudyWeekday(cursor) && !leaveSet.has(cursor)) {
+        overflowDate = cursor;
+        break;
+      }
+    }
+  }
+
   const isStudyDate = (date: string): boolean =>
-    studyDaySet.has(weekdayOf(date)) && !leaveSet.has(date);
+    (studyDaySet.has(weekdayOf(date)) || date === overflowDate) && !leaveSet.has(date);
 
   /** Advance `date` until it is a valid study day. */
   const nextStudyDate = (date: string): string => {
@@ -82,6 +103,31 @@ export function generateSchedule(
   };
 
   const subjectById = new Map(curriculum.map((s) => [s.id, s]));
+
+  /** lectureId -> its subject + lecture, for the backlog off-day feature. */
+  const lectureSubject = new Map<string, { subject: Subject; lecture: Lecture }>();
+  for (const subject of curriculum) {
+    for (const topic of subject.topics) {
+      for (const lecture of topic.lectures) {
+        lectureSubject.set(lecture.id, { subject, lecture });
+      }
+    }
+  }
+
+  /**
+   * Backlog "move to off day": lectures pulled OUT of the normal packing
+   * queue and placed on the off day (usually Sunday) the user chose. A
+   * lecture only lands there while it is still unwatched and still exists
+   * in the curriculum; already-watched or removed entries are ignored.
+   */
+  const offDayByDate = new Map<string, string[]>();
+  for (const [id, date] of Object.entries(planConfig.offDayLectures ?? {})) {
+    if (!lectureSubject.has(id) || !isRemaining(progress, id) || date < start) continue;
+    offDayByDate.set(date, [...(offDayByDate.get(date) ?? []), id]);
+  }
+  // Only lectures that actually land on a valid off day leave the queue.
+  const offDayLectureSet = new Set<string>();
+  for (const ids of offDayByDate.values()) for (const id of ids) offDayLectureSet.add(id);
 
   const assigned = new Map<string, Assigned>();
   let cursor = start;
@@ -100,6 +146,7 @@ export function generateSchedule(
     for (const topic of subject.topics) {
       for (const lecture of topic.lectures) {
         if (!isRemaining(progress, lecture.id)) continue;
+        if (offDayLectureSet.has(lecture.id)) continue; // waiting on its off day
         remaining.push({ lecture, eff: Math.ceil(lecture.durationSec / speed) });
       }
     }
@@ -146,6 +193,31 @@ export function generateSchedule(
         plannedSec: 0,
       });
       cursor = addDays(cursor, 1);
+    }
+  }
+
+  // Place the backlog lectures that were moved to off days. If that off day
+  // is also the shift-catch-up overflow day (rare), merge with the packed
+  // lectures instead of overwriting them.
+  for (const [date, ids] of offDayByDate) {
+    const first = lectureSubject.get(ids[0]);
+    if (!first) continue;
+    const plannedSec = ids.reduce(
+      (n, id) => n + Math.ceil((lectureSubject.get(id)?.lecture.durationSec ?? 0) / speed),
+      0,
+    );
+    const existing = assigned.get(date);
+    if (existing) {
+      existing.lectureIds.push(...ids);
+      existing.plannedSec += plannedSec;
+    } else {
+      mark(date, {
+        type: 'study',
+        subjectId: first.subject.id,
+        subjectName: first.subject.name,
+        lectureIds: [...ids],
+        plannedSec,
+      });
     }
   }
 
@@ -220,7 +292,50 @@ export function catchUpPlan(planConfig: PlanConfig, today: string): PlanConfig {
     startDate: today,
     // Leave days in the past can no longer shift anything; keep the list tidy.
     leaveDates: planConfig.leaveDates.filter((d) => d >= today),
+    // Catching up IS a shift: the next off day (usually Sunday) may absorb
+    // the week's overflow, matching what the Backlog tab promises.
+    backlogAnchor: today,
   };
+}
+
+/**
+ * First date on or after `date` that is a valid study day (weekday selected
+ * AND not a leave day). Used to anchor "shift the schedule" on a day that can
+ * actually take lectures.
+ */
+export function nextStudyDateOnOrAfter(date: string, planConfig: PlanConfig): string {
+  const studyDaySet = new Set(planConfig.studyDays);
+  const leaveSet = new Set(planConfig.leaveDates);
+  let cursor = date;
+  for (
+    let i = 0;
+    i < 4000 && !(studyDaySet.has(weekdayOf(cursor)) && !leaveSet.has(cursor));
+    i++
+  ) {
+    cursor = addDays(cursor, 1);
+  }
+  return cursor;
+}
+
+/**
+ * First date on or after `date` that is NOT a study day (a weekday the user
+ * excluded, or a leave day). Usually the following Sunday - the "off day" the
+ * Backlog tab offers for missed lectures. Returns null when no off day exists
+ * within `maxDays` (e.g. a 7-days-a-week plan).
+ */
+export function nextOffDayOnOrAfter(
+  date: string,
+  planConfig: PlanConfig,
+  maxDays = 60,
+): string | null {
+  const studyDaySet = new Set(planConfig.studyDays);
+  const leaveSet = new Set(planConfig.leaveDates);
+  let cursor = date;
+  for (let i = 0; i <= maxDays; i++) {
+    if (!studyDaySet.has(weekdayOf(cursor)) || leaveSet.has(cursor)) return cursor;
+    cursor = addDays(cursor, 1);
+  }
+  return null;
 }
 
 /**
