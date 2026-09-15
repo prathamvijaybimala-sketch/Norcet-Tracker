@@ -16,15 +16,32 @@ const FLAGS: { key: ProgressFlag; label: string }[] = [
  * Subscribes only to its own progress record, so ticking a box re-renders this
  * row and the schedule - never the whole list (and never with a page reload or
  * a scroll jump).
+ *
+ * Two shapes:
+ *  - CLASSIC (no `onToggle`): the old flat row with name, context and the two
+ *    checkboxes. Used by flat lists ("Done today").
+ *  - ACCORDION (`onToggle` given): a compact one-line button when collapsed
+ *    (tick + name + duration, no checkboxes), and a larger name + the two
+ *    checkboxes when expanded. The parent owns "which row is open" - see
+ *    `useAccordion`.
  */
 export const LectureRow = memo(function LectureRow({
   lectureId,
   showContext = true,
   showScheduledDate = false,
+  expanded = false,
+  onToggle,
+  hideSubject = false,
 }: {
   lectureId: string;
   showContext?: boolean;
   showScheduledDate?: boolean;
+  /** Accordion mode only: this row is the expanded one. */
+  expanded?: boolean;
+  /** Present = accordion row (collapsed button / expanded card). Absent = classic flat row. */
+  onToggle?: () => void;
+  /** Hide the per-row subject when the whole list belongs to one subject. */
+  hideSubject?: boolean;
 }) {
   const ref = useAppStore((s) => s.lectureIndex.get(lectureId));
   const progress = useAppStore((s) => s.progress[lectureId]);
@@ -33,7 +50,7 @@ export const LectureRow = memo(function LectureRow({
   const setFlag = useAppStore((s) => s.setFlag);
   const theme = useAppStore((s) => s.theme);
 
-  const onToggle = useCallback(
+  const onToggleFlag = useCallback(
     (flag: ProgressFlag) => (e: React.ChangeEvent<HTMLInputElement>) => {
       // No preventDefault, no navigation, no remount: the DOM node stays put so
       // scroll position and focus are preserved.
@@ -47,24 +64,92 @@ export const LectureRow = memo(function LectureRow({
   const effSec = ref.lecture.durationSec / (speed > 0 ? speed : 1);
   const color = subjectColor(ref.subject.id, theme);
   const done = Boolean(progress?.lectureWatched);
+  const fullyDone = done && Boolean(progress?.notesDone);
 
-  return (
-    <div className="lecture">
-      <div className="lecture-head">
-        {showContext ? <span className="dot" style={{ background: color.base }} /> : null}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="lecture-name" style={done ? { color: 'var(--text-dim)' } : undefined}>
-            {ref.lecture.name}
+  const flags = (
+    <div className="lecture-flags">
+      {FLAGS.map(({ key, label }) => (
+        <label className={`check ${progress?.[key] ? 'on' : ''}`} key={key}>
+          <input type="checkbox" checked={Boolean(progress?.[key])} onChange={onToggleFlag(key)} />
+          <span className="check-label">{label}</span>
+        </label>
+      ))}
+    </div>
+  );
+
+  // ------- classic flat row (unchanged) -------
+  if (!onToggle) {
+    return (
+      <div className="lecture">
+        <div className="lecture-head">
+          {showContext ? <span className="dot" style={{ background: color.base }} /> : null}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="lecture-name" style={done ? { color: 'var(--text-dim)' } : undefined}>
+              {ref.lecture.name}
+            </div>
+            <div className="lecture-sub">
+              {showContext ? (
+                <>
+                  <span>{ref.subject.name}</span>
+                  <span aria-hidden>·</span>
+                  <span className="truncate">{ref.topic.name}</span>
+                  <span aria-hidden>·</span>
+                </>
+              ) : null}
+              <span className="mono">{formatClock(ref.lecture.durationSec)}</span>
+              {speed !== 1 ? (
+                <span className="badge accent">{formatDuration(effSec)} at {speed}×</span>
+              ) : null}
+              {showScheduledDate && scheduledDate ? (
+                <span className="badge">due {scheduledDate.slice(5)}</span>
+              ) : null}
+            </div>
           </div>
+        </div>
+        {flags}
+      </div>
+    );
+  }
+
+  // ------- accordion row: collapsed -------
+  if (!expanded) {
+    return (
+      <button
+        type="button"
+        className={`lecture acc ${done ? 'done' : ''}`}
+        onClick={onToggle}
+        aria-expanded={false}
+      >
+        <span className={`acc-tick ${fullyDone ? 'on' : ''}`} aria-hidden>
+          {fullyDone ? '✓' : ''}
+        </span>
+        <span className="acc-name truncate">{ref.lecture.name}</span>
+        <span className="acc-dur mono">{formatClock(ref.lecture.durationSec)}</span>
+      </button>
+    );
+  }
+
+  // ------- accordion row: expanded -------
+  return (
+    <div className={`lecture acc open ${done ? 'done' : ''}`}>
+      <button type="button" className="acc-head" onClick={onToggle} aria-expanded={true}>
+        <span className={`acc-tick ${fullyDone ? 'on' : ''}`} aria-hidden>
+          {fullyDone ? '✓' : ''}
+        </span>
+        <span className="acc-name truncate">{ref.lecture.name}</span>
+        <span className="acc-dur mono">{formatClock(ref.lecture.durationSec)}</span>
+      </button>
+      <div className="acc-body">
+        {showContext ? (
           <div className="lecture-sub">
-            {showContext ? (
+            {!hideSubject ? (
               <>
                 <span>{ref.subject.name}</span>
                 <span aria-hidden>·</span>
-                <span className="truncate">{ref.topic.name}</span>
-                <span aria-hidden>·</span>
               </>
             ) : null}
+            <span className="truncate">{ref.topic.name}</span>
+            <span aria-hidden>·</span>
             <span className="mono">{formatClock(ref.lecture.durationSec)}</span>
             {speed !== 1 ? (
               <span className="badge accent">{formatDuration(effSec)} at {speed}×</span>
@@ -73,15 +158,8 @@ export const LectureRow = memo(function LectureRow({
               <span className="badge">due {scheduledDate.slice(5)}</span>
             ) : null}
           </div>
-        </div>
-      </div>
-      <div className="lecture-flags">
-        {FLAGS.map(({ key, label }) => (
-          <label className={`check ${progress?.[key] ? 'on' : ''}`} key={key}>
-            <input type="checkbox" checked={Boolean(progress?.[key])} onChange={onToggle(key)} />
-            <span className="check-label">{label}</span>
-          </label>
-        ))}
+        ) : null}
+        {flags}
       </div>
     </div>
   );

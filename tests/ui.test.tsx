@@ -11,8 +11,9 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import App from '../src/App';
 import { useAppStore } from '../src/store/appStore';
-import { addDays, todayISO } from '../src/lib/dates';
+import { addDays, dayOfYear, todayISO } from '../src/lib/dates';
 import { nextOffDayOnOrAfter } from '../src/lib/schedule';
+import { STUDY_QUOTES } from '../src/lib/quotes';
 
 const demo = readFileSync(resolve(__dirname, '../public/demo-curriculum.json'), 'utf8');
 
@@ -86,8 +87,8 @@ describe('today screen', () => {
     expect(state().scheduleByDate.get(state().planConfig.startDate)?.lectureIds).not.toContain(
       todayIds[0],
     );
-    // …and shows up under "Done today" instead of vanishing.
-    expect(await screen.findByText('Done today')).toBeTruthy();
+    // …and shows up in the "Done today" summary instead of vanishing.
+    expect(await screen.findByText(/watched today/)).toBeTruthy();
     expect(state().schedule.length).toBeLessThanOrEqual(before);
   });
 
@@ -120,6 +121,91 @@ describe('today screen', () => {
     expect(state().scheduleByLecture.get(firstId)).toBe(state().schedule[0].date);
   });
 
+  it('keeps exactly one lecture row expanded at a time (accordion)', async () => {
+    await boot();
+    await importDemo();
+    await screen.findByText("Today's lectures");
+
+    const state = () => useAppStore.getState();
+    const dayIds = state().scheduleByDate.get(state().planConfig.startDate)!.lectureIds;
+    expect(dayIds.length).toBeGreaterThanOrEqual(2);
+    const nameOf = (id: string) => state().lectureIndex.get(id)!.lecture.name;
+    const openName = () => document.querySelector('.lecture.acc.open .acc-name')!.textContent;
+
+    // The first not-fully-done lecture is expanded automatically.
+    expect(openName()).toBe(nameOf(dayIds[0]));
+    expect(document.querySelectorAll('.lecture.acc.open')).toHaveLength(1);
+
+    // Tapping a collapsed row expands it - view only, no flags are created.
+    fireEvent.click(screen.getByText(nameOf(dayIds[1])));
+    expect(openName()).toBe(nameOf(dayIds[1]));
+    expect(document.querySelectorAll('.lecture.acc.open')).toHaveLength(1);
+    expect(state().progress[dayIds[1]]).toBeUndefined();
+
+    // Tapping the (manual) expanded row collapses it back to the auto row.
+    fireEvent.click(screen.getByText(nameOf(dayIds[1])));
+    expect(openName()).toBe(nameOf(dayIds[0]));
+    expect(document.querySelectorAll('.lecture.acc.open')).toHaveLength(1);
+  });
+
+  it('auto-advances to the next row when the open row is ticked', async () => {
+    await boot();
+    await importDemo();
+    await screen.findByText("Today's lectures");
+
+    const state = () => useAppStore.getState();
+    const dayIds = state().scheduleByDate.get(state().planConfig.startDate)!.lectureIds;
+    expect(dayIds.length).toBeGreaterThanOrEqual(2);
+    const [a, b] = dayIds;
+    const nameOf = (id: string) => state().lectureIndex.get(id)!.lecture.name;
+    const openName = () => document.querySelector('.lecture.acc.open .acc-name')!.textContent;
+    expect(openName()).toBe(nameOf(a));
+
+    // Ticking "Lecture" on the open row: the watched lecture leaves the
+    // schedule and the accordion advances to the next one - no reload, the
+    // list container is not remounted.
+    fireEvent.click(
+      within(document.querySelector('.lecture.acc.open') as HTMLElement).getByRole('checkbox', {
+        name: 'Lecture',
+      }),
+    );
+    await waitFor(() => expect(openName()).toBe(nameOf(b)));
+    expect(document.querySelectorAll('.lecture.acc.open')).toHaveLength(1);
+
+    // The finished lecture shows up in the "Done today" summary; expand it
+    // and finish its independent "Notes" box from the flat list.
+    fireEvent.click(await screen.findByText(/watched today/));
+    await waitFor(() =>
+      expect(document.querySelector('.done-list')!.className).toContain('open'),
+    );
+    const doneRow = within(document.querySelector('.done-list') as HTMLElement)
+      .getByText(nameOf(a))
+      .closest('.lecture') as HTMLElement;
+    fireEvent.click(within(doneRow).getByRole('checkbox', { name: 'Notes' }));
+    await waitFor(() => expect(state().progress[a]?.notesDone).toBe(true));
+    expect(state().progress[a]?.lectureWatched).toBe(true);
+    // Notes ticking did NOT open the accordion or create extra progress.
+    expect(openName()).toBe(nameOf(b));
+    expect(document.querySelectorAll('.lecture.acc.open')).toHaveLength(1);
+  });
+
+  it('shows "Done today" as a one-line summary that expands on tap', async () => {
+    await boot();
+    await importDemo();
+    await screen.findByText("Today's lectures");
+
+    const state = () => useAppStore.getState();
+    const id = state().scheduleByDate.get(state().planConfig.startDate)!.lectureIds[0];
+    state().setFlags(id, { lectureWatched: true, notesDone: true });
+
+    const summary = await screen.findByText(/watched today/);
+    const listEl = () => document.querySelector('.done-list') as HTMLElement;
+    expect(listEl().className).not.toContain('open');
+    fireEvent.click(summary);
+    await waitFor(() => expect(listEl().className).toContain('open'));
+    expect(listEl().querySelectorAll('.lecture').length).toBeGreaterThan(0);
+  });
+
   it('queues a lecture for revision only when all three boxes are ticked', async () => {
     await boot();
     await importDemo();
@@ -149,6 +235,48 @@ describe('timeline screen', () => {
     fireEvent.click(cells[0] as HTMLElement);
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getAllByRole('checkbox').length).toBeGreaterThan(0);
+  });
+
+  it('aligns every month under the correct weekday column (day 1 in its true weekday)', async () => {
+    await boot();
+    await importDemo();
+    fireEvent.click(await screen.findByRole('button', { name: /Timeline/ }));
+    await screen.findByText(/September 2026/);
+
+    const gridOf = (label: string) =>
+      [...document.querySelectorAll('.month-grid')].find((g) =>
+        g.closest('.card')!.textContent!.includes(label),
+      ) as HTMLElement;
+
+    // October 2026: the 1st is a Thursday -> exactly 4 leading blanks.
+    const octCells = [...gridOf('October 2026').querySelectorAll('.day-cell')];
+    const oct1 = octCells.find((c) => (c as HTMLElement).title!.startsWith('Thu 1 Oct'));
+    expect(octCells.indexOf(oct1 as HTMLElement)).toBe(4);
+
+    // November 2026: the 1st is a Sunday -> no leading blanks at all.
+    const novCells = [...gridOf('November 2026').querySelectorAll('.day-cell')];
+    expect((novCells[0] as HTMLElement).title).toMatch(/^Sun 1 Nov/);
+
+    // December 2026: the 1st is a Tuesday -> 2 leading blanks.
+    const decCells = [...gridOf('December 2026').querySelectorAll('.day-cell')];
+    const dec1 = decCells.find((c) => (c as HTMLElement).title!.startsWith('Tue 1 Dec'));
+    expect(decCells.indexOf(dec1 as HTMLElement)).toBe(2);
+  });
+
+  it('uses the same accordion in the day detail modal (one open row)', async () => {
+    await boot();
+    await importDemo();
+    fireEvent.click(await screen.findByRole('button', { name: /Timeline/ }));
+    const cells = document.querySelectorAll('.day-cell.has-plan');
+    expect(cells.length).toBeGreaterThan(0);
+    fireEvent.click(cells[0] as HTMLElement);
+    const dialog = (await screen.findByRole('dialog')) as HTMLElement;
+    expect(dialog.querySelectorAll('.lecture.acc.open')).toHaveLength(1);
+    // The Questions checkbox stays a single per-topic control in the header.
+    expect(dialog.querySelectorAll('.topic-block').length).toBeGreaterThan(0);
+    expect(
+      within(dialog).getAllByRole('checkbox', { name: /Questions done for / }).length,
+    ).toBe(dialog.querySelectorAll('.topic-block').length);
   });
 });
 
@@ -240,6 +368,33 @@ describe('greeting and theme', () => {
     const sub = document.querySelector('.greeting-sub')!.textContent ?? '';
     expect(sub).toMatch(/Good (morning|afternoon|evening|night)/);
     expect(document.querySelector('.greeting-quote')).toBeTruthy();
+  });
+
+  it('shows the day\'s quote from the quote bank, expanded by default, tap-toggleable', async () => {
+    await boot();
+    await importDemo();
+    await screen.findByText("Today's lectures");
+
+    // Daily quote: seeded off the day-of-year, so the exact quote is known.
+    const expected = STUDY_QUOTES[dayOfYear(new Date()) % STUDY_QUOTES.length];
+    const quote = document.querySelector('.greeting-quote')!.textContent ?? '';
+    expect(quote).toContain(expected.text);
+    expect(quote.startsWith('“')).toBe(true);
+    // Expanded by default: the time-of-day line is visible.
+    expect(document.querySelector('.greeting-sub')!.textContent).toMatch(
+      /Good (morning|afternoon|evening|night)/,
+    );
+
+    const card = document.querySelector('.greeting-card') as HTMLElement;
+    // Manual tap collapses to the one-line summary ("Good morning · Tue 15 Sep").
+    fireEvent.click(card);
+    expect(card.className).toContain('collapsed');
+    const line = document.querySelector('.greeting-line')!.textContent ?? '';
+    expect(line).toMatch(/Good (morning|afternoon|evening|night)/);
+    expect(line).toMatch(/\bSep\b/);
+    // And the next tap expands it again.
+    fireEvent.click(card);
+    expect(card.className).not.toContain('collapsed');
   });
 
   it('toggles between dark and light mode', async () => {

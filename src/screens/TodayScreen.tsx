@@ -1,10 +1,11 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useAppStore } from '../store/appStore';
 import { TopicSection } from '../components/TopicSection';
 import { Modal, ProgressBar, EmptyState } from '../components/ui';
 import { completedOnDate, computeTodayStats, dayCompletion } from '../lib/stats';
 import { dayOfYear, formatDateLong, formatDate, todayISO } from '../lib/dates';
 import { formatDuration } from '../lib/duration';
+import { STUDY_QUOTES } from '../lib/quotes';
 import { dueRevisions } from '../lib/revision';
 
 /**
@@ -16,21 +17,8 @@ import { dueRevisions } from '../lib/revision';
 const GREETINGS = ['Hiiii', 'Hey', 'Hello', 'Namaste', 'Hi'];
 const GREETING_EMOJIS = ['👋', '😊', '🙃', '😄', '☺️', '🙂'];
 
-/** Short, exam-season friendly quotes (rotated by day, so a new one appears each morning). */
-const QUOTES = [
-  'Every late-night study session is an investment in the lives you’ll save tomorrow.',
-  'You’re not just studying — you’re preparing to save lives.',
-  'Nursing school is temporary, but the lives you’ll impact as a nurse are forever.',
-  'One more page. One more lesson. You are built for this.',
-  'Your hard work will speak for you. Breathe. You got this.',
-  'Impossible is just a challenge that hasn’t met your preparation yet.',
-  'Every seasoned nurse was once exactly where you are. You belong here.',
-  'Focus on progress, not perfection.',
-  'Keep showing up. Your white coat moment is coming.',
-  'What you do today matters forever.',
-  'The difficult chapters are the ones that make you the calm one later.',
-  'You didn’t choose nursing; nursing chose you. Trust the calling.',
-];
+/** How much scrolling (px, accumulated in one direction) flips the card. */
+const SCROLL_THRESHOLD = 32;
 
 function timeGreeting(hour: number): string {
   if (hour >= 5 && hour < 12) return 'Good morning';
@@ -39,61 +27,129 @@ function timeGreeting(hour: number): string {
   return 'Good night';
 }
 
+/**
+ * The daily greeting card.
+ *
+ * EXPANDED by default: greeting word + name + emoji, time-of-day + date, and
+ * the day's quote (one per day, seeded off the day-of-year so it stays the
+ * same all day long). Scrolling DOWN past the hysteresis threshold collapses
+ * it to a single line ("Good morning, Priya · Tue 15 Sep"); scrolling back UP
+ * past the threshold re-expands it. Small back-and-forth gestures reset the
+ * accumulator, so they never cause jitter. A manual tap toggles the card and
+ * wins until the next scroll direction change past the threshold. Collapse
+ * state is local UI state only - never persisted.
+ */
 function GreetingBox({ paceBadge }: { paceBadge: ReactNode }) {
   const planConfig = useAppStore((s) => s.planConfig);
   const updatePlan = useAppStore((s) => s.updatePlan);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  const [collapsed, setCollapsed] = useState(false);
+  const [manual, setManual] = useState<boolean | null>(null);
 
   const now = new Date();
   const day = dayOfYear(now);
   const greeting = GREETINGS[day % GREETINGS.length];
   const emoji = GREETING_EMOJIS[Math.floor(day / 2) % GREETING_EMOJIS.length];
   const name = planConfig.studentName.trim();
-  const quote = QUOTES[day % QUOTES.length];
+  const quote = STUDY_QUOTES[day % STUDY_QUOTES.length];
+  const shown = manual ?? collapsed;
+
+  // Scroll-driven collapse with hysteresis: movement only counts while it
+  // keeps the same direction, and only past the threshold does anything flip.
+  useEffect(() => {
+    let lastY = window.scrollY;
+    let acc = 0;
+    const onScroll = () => {
+      const y = window.scrollY;
+      const dy = y - lastY;
+      lastY = y;
+      if (dy === 0) return;
+      if ((acc > 0 && dy < 0) || (acc < 0 && dy > 0)) acc = 0;
+      acc += dy;
+      if (acc >= SCROLL_THRESHOLD) {
+        setCollapsed(true);
+        setManual(null);
+        acc = 0;
+      } else if (acc <= -SCROLL_THRESHOLD) {
+        setCollapsed(false);
+        setManual(null);
+        acc = 0;
+      }
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  const onCardClick = (e: React.MouseEvent) => {
+    // Taps on the pencil (or any control) do not toggle the card.
+    if (e.target instanceof Element && e.target.closest('button, a, input')) return;
+    setManual(!shown);
+  };
 
   return (
-    <div className="card greeting-card">
+    <div className={`card greeting-card ${shown ? 'collapsed' : ''}`} onClick={onCardClick}>
       <div className="greeting-top">
         <div>
           <div className="greeting-line">
-            {greeting}
-            {name ? (
+            {shown ? (
               <>
-                {' '}
-                {name}
-                <button
-                  className="greeting-edit"
-                  aria-label="Edit your name"
-                  onClick={() => {
-                    setDraft(name);
-                    setEditing(true);
-                  }}
-                >
-                  ✏️
-                </button>
+                {timeGreeting(now.getHours())}
+                {name ? `, ${name}` : ''} · {formatDate(todayISO())}
               </>
             ) : (
-              <button
-                className="greeting-edit"
-                aria-label="Set your name"
-                onClick={() => {
-                  setDraft('');
-                  setEditing(true);
-                }}
-              >
-                ✏️
-              </button>
+              <>
+                {greeting}
+                {name ? (
+                  <>
+                    {' '}
+                    {name}
+                    <button
+                      className="greeting-edit"
+                      aria-label="Edit your name"
+                      onClick={() => {
+                        setDraft(name);
+                        setEditing(true);
+                      }}
+                    >
+                      ✏️
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="greeting-edit"
+                    aria-label="Set your name"
+                    onClick={() => {
+                      setDraft('');
+                      setEditing(true);
+                    }}
+                  >
+                    ✏️
+                  </button>
+                )}
+                <span aria-hidden> {emoji}</span>
+              </>
             )}
-            <span aria-hidden> {emoji}</span>
+            <span className="greeting-chev" aria-hidden>
+              {shown ? '▸' : '▾'}
+            </span>
           </div>
-          <div className="greeting-sub">
-            {timeGreeting(now.getHours())} · {formatDateLong(todayISO())}
+          <div className="greeting-collapse">
+            <div className="greeting-collapse-inner">
+              {shown ? null : (
+                <div className="greeting-sub">
+                  {timeGreeting(now.getHours())} · {formatDateLong(todayISO())}
+                </div>
+              )}
+              <div className="greeting-quote">
+                “{quote.text}”
+                {quote.author && quote.author !== 'Unknown' ? ` — ${quote.author}` : ''}
+              </div>
+            </div>
           </div>
         </div>
         {paceBadge}
       </div>
-      <div className="greeting-quote">“{quote}”</div>
 
       {editing ? (
         <Modal
@@ -144,6 +200,8 @@ export function TodayScreen() {
   const lectureIndex = useAppStore((s) => s.lectureIndex);
   const catchUp = useAppStore((s) => s.catchUp);
   const setRoute = useAppStore((s) => s.setRoute);
+  /** "Done today" starts as a one-line summary; tapping it expands the list. */
+  const [doneOpen, setDoneOpen] = useState(false);
 
   const today = todayISO();
 
@@ -243,12 +301,24 @@ export function TodayScreen() {
 
       {doneToday.length ? (
         <div className="card">
-          <div className="card-title">
-            <span>Done today</span>
-            <span className="spacer" />
-            <span className="tiny faint">{formatDuration(doneTodaySec)} watched</span>
+          <button
+            type="button"
+            className="done-summary"
+            onClick={() => setDoneOpen((v) => !v)}
+            aria-expanded={doneOpen}
+          >
+            <span>
+              {formatDuration(doneTodaySec)} watched today <span aria-hidden>✓</span>
+            </span>
+            <span className="greeting-chev" aria-hidden>
+              {doneOpen ? '▴' : '▾'}
+            </span>
+          </button>
+          <div className={`done-list ${doneOpen ? 'open' : ''}`}>
+            <div className="done-list-inner">
+              <TopicSection lectureIds={doneToday} showContext={false} accordion={false} />
+            </div>
           </div>
-          <TopicSection lectureIds={doneToday} showContext={false} />
         </div>
       ) : null}
 

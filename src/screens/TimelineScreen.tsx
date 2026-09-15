@@ -4,16 +4,9 @@ import { TopicSection } from '../components/TopicSection';
 import { Modal, EmptyState, ProgressBar } from '../components/ui';
 import { dayCompletion, dayStatus } from '../lib/stats';
 import { subjectColor } from '../lib/colors';
-import {
-  MONTH_NAMES,
-  WEEKDAY_SHORT,
-  formatDate,
-  monthKey,
-  parseISODate,
-  todayISO,
-} from '../lib/dates';
+import { buildMonthGrid } from '../lib/monthGrid';
+import { WEEKDAY_SHORT, formatDate, monthKey, parseISODate, todayISO } from '../lib/dates';
 import { formatDuration } from '../lib/duration';
-import type { ScheduleDay } from '../types';
 
 export function TimelineScreen() {
   const schedule = useAppStore((s) => s.schedule);
@@ -34,29 +27,7 @@ export function TimelineScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const months = useMemo(() => {
-    const out: { key: string; label: string; cells: (ScheduleDay | null)[] }[] = [];
-    for (const day of schedule) {
-      const key = monthKey(day.date);
-      let bucket = out[out.length - 1];
-      if (!bucket || bucket.key !== key) {
-        const [y, m] = key.split('-').map(Number);
-        bucket = { key, label: `${MONTH_NAMES[m - 1]} ${y}`, cells: [] };
-        out.push(bucket);
-      }
-      const dayOfMonth = parseISODate(day.date).getDate();
-      while (bucket.cells.length < dayOfMonth - 1) bucket.cells.push(null);
-      bucket.cells.push(day);
-    }
-    // Pad the first month's leading blanks.
-    if (out.length) {
-      const first = out[0];
-      const firstDate = parseISODate(schedule[0].date);
-      const leading = firstDate.getDay();
-      first.cells = [...Array.from({ length: leading }, () => null), ...first.cells];
-    }
-    return out;
-  }, [schedule]);
+  const months = useMemo(() => buildMonthGrid(schedule), [schedule]);
 
   const selectedDay = selected ? scheduleByDate.get(selected) : undefined;
   const completion = useMemo(

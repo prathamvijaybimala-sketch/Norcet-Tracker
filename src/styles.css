@@ -551,6 +551,125 @@ textarea {
   flex-wrap: wrap;
 }
 
+/* ------------------------------ accordion rows -------------------------- */
+/* Compact collapsed lecture row (a button): tick + name + duration only. */
+.lecture.acc {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 10px 2px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.lecture.acc:last-child {
+  border-bottom: 0;
+}
+
+.lecture.acc:hover {
+  background: var(--bg-hover);
+}
+
+.lecture.acc .acc-name {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  min-width: 0;
+}
+
+.lecture.acc .acc-dur {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.acc-tick {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  line-height: 1;
+  color: transparent;
+  background: transparent;
+}
+
+.acc-tick.on {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: #08120d;
+}
+
+.lecture.acc.done .acc-name {
+  color: var(--text-dim);
+}
+
+/* Expanded accordion row: larger name + the two checkboxes underneath. */
+.lecture.acc.open {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  margin: 2px 0;
+  animation: acc-in 150ms ease-out;
+  cursor: default;
+}
+
+.lecture.acc.open:hover {
+  background: var(--bg-elev-2);
+}
+
+.lecture.acc.open .acc-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.lecture.acc.open .acc-name {
+  font-size: 16px;
+}
+
+.lecture.acc.open .acc-dur {
+  color: var(--text-dim);
+}
+
+.lecture.acc.open .acc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-left: 29px;
+}
+
+@keyframes acc-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .dot {
   width: 8px;
   height: 8px;
@@ -1099,13 +1218,139 @@ textarea {
   margin-top: 3px;
 }
 
+/* The collapsible part of the greeting card (time-of-day line + quote)
+   animates open/closed via grid-template-rows; the whole card is tap-toggle. */
+.greeting-card {
+  cursor: pointer;
+}
+
+.greeting-collapse {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.22s ease, opacity 0.22s ease;
+  opacity: 1;
+}
+
+.greeting-card.collapsed .greeting-collapse {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.greeting-collapse-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
 .greeting-quote {
   margin-top: 12px;
   padding-top: 10px;
   border-top: 1px dashed var(--border);
-  font-size: 13px;
+  font-family: Georgia, 'Iowan Old Style', 'Times New Roman', serif;
   font-style: italic;
+  font-size: 16.5px;
+  line-height: 1.5;
   color: var(--text-dim);
+}
+
+.greeting-card.collapsed .greeting-quote {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.greeting-chev {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* ------------------------------ done today ------------------------------ */
+/* "Xh Ym watched today" summary line; the list folds underneath it. */
+.done-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: 0;
+  padding: 2px 0;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 0;
+}
+
+.done-summary:hover {
+  color: var(--text);
+}
+
+.done-list {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 0.22s ease, opacity 0.22s ease;
+}
+
+.done-list.open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.done-list-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.done-list-inner .lecture:first-child {
+  padding-top: 8px;
+}
+
+/* ------------------------------ flat stat cards ------------------------- */
+.stat-grid.flat {
+  gap: 10px;
+}
+
+.stat-grid.flat .stat {
+  background: transparent;
+  border: 0;
+  border-top: 2px solid var(--border-strong);
+  border-radius: 0;
+  padding: 4px 2px 0;
+}
+
+.stat-grid.flat .stat .stat-value {
+  font-size: 16px;
+}
+
+.stat-grid.flat .stat .stat-label {
+  font-size: 10px;
+}
+
+/* Backlog footnote with a dismiss (hides for the session). */
+.backlog-note {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.backlog-note-x {
+  flex: 0 0 auto;
+  background: none;
+  border: 0;
+  padding: 0 2px;
+  font-size: 14px;
+  line-height: 1.2;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.backlog-note-x:hover {
+  color: var(--text);
 }
 
 /* -------------------------------- plan lock ----------------------------- */

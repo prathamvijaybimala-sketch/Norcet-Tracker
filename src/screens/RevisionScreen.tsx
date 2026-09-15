@@ -6,6 +6,9 @@ import { EmptyState, Modal, StatCard } from '../components/ui';
 import { formatDate, todayISO } from '../lib/dates';
 import { formatDuration } from '../lib/duration';
 
+/** sessionStorage key for the dismissed backlog footnote (per session). */
+const BACKLOG_NOTE_KEY = 'norcet.backlogNoteDismissed';
+
 /**
  * Revision + Backlog (section 6 and the Backlog feature).
  *
@@ -59,7 +62,7 @@ function RevisionTab() {
   return (
     <div>
       <div className="row between wrap" style={{ marginBottom: 10 }}>
-        <div className="stat-grid" style={{ flex: 1 }}>
+        <div className="stat-grid flat" style={{ flex: 1 }}>
           <StatCard value={due.length} label="Due today" tone={due.length ? 'var(--warn)' : undefined} />
           <StatCard value={upcoming.length} label="Scheduled" />
           <StatCard value={graduated} label="On final interval" />
@@ -212,6 +215,10 @@ function BacklogTab() {
   const returnLectureFromOffDay = useAppStore((s) => s.returnLectureFromOffDay);
   const shiftScheduleFromBacklog = useAppStore((s) => s.shiftScheduleFromBacklog);
   const [confirmShift, setConfirmShift] = useState(false);
+  /** The "why does Sunday appear" footnote hides itself for the session once dismissed. */
+  const [noteDismissed, setNoteDismissed] = useState(
+    () => sessionStorage.getItem(BACKLOG_NOTE_KEY) === '1',
+  );
 
   const today = todayISO();
 
@@ -238,7 +245,7 @@ function BacklogTab() {
 
   return (
     <div>
-      <div className="stat-grid" style={{ marginBottom: 12 }}>
+      <div className="stat-grid flat" style={{ marginBottom: 12 }}>
         <StatCard value={missed.length} label="Missed" tone={missed.length ? 'var(--warn)' : undefined} />
         <StatCard value={moved.length} label="On off day" />
       </div>
@@ -291,11 +298,28 @@ function BacklogTab() {
           })
         )}
 
-        {missed.length > 0 ? (
-          <div className="tiny faint" style={{ marginTop: 8 }}>
-            {offDay
-              ? `“To ${formatDate(offDay)}” parks just this lecture on your next off day - the rest of the plan stays put. “Shift schedule” re-spreads everything from today and opens the next off day for the extra lecture.`
-              : '“Shift schedule” re-spreads everything from today so the missed lecture lands in the coming days. (Your plan currently has no off days to park lectures on.)'}
+        {missed.length > 0 && !noteDismissed ? (
+          <div className="tiny faint backlog-note" style={{ marginTop: 8 }}>
+            <span>
+              {offDay
+                ? `“To ${formatDate(offDay)}” parks just this lecture on your next off day - the rest of the plan stays put. “Shift schedule” re-spreads everything from today and opens the next off day for the extra lecture.`
+                : '“Shift schedule” re-spreads everything from today so the missed lecture lands in the coming days. (Your plan currently has no off days to park lectures on.)'}
+            </span>
+            <button
+              type="button"
+              className="backlog-note-x"
+              aria-label="Hide this note"
+              onClick={() => {
+                setNoteDismissed(true);
+                try {
+                  sessionStorage.setItem(BACKLOG_NOTE_KEY, '1');
+                } catch {
+                  // sessionStorage unavailable (private mode) - it just won't persist
+                }
+              }}
+            >
+              ×
+            </button>
           </div>
         ) : null}
       </div>
