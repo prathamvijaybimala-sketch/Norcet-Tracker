@@ -2,12 +2,23 @@ name: Android APK
 
 # Builds the Capacitor Android wrapper around the web app.
 #
-# Debug APKs are built on every push / PR to check the native project still
-# builds, and are uploaded as a workflow artifact. Tagging a release (v1.2.3)
-# additionally builds a release APK/AAB and attaches them to the GitHub Release.
-# Manual runs can pick the build type and version.
+# Runs on this working branch only (plus tags and manual dispatch). To start
+# building releases once this lands on main, add "main" to the push branches
+# below.
+#
+#   push to the branch  -> debug APK, uploaded as a workflow artifact
+#   tag v1.2.3          -> release APK + AAB, attached to the GitHub Release
+#   workflow_dispatch   -> pick debug or release yourself
+#
+# Optional signed release builds: set the KEYSTORE_* repository secrets (see
+# README); without them release builds are unsigned.
 
 on:
+  push:
+    branches:
+      - arena/01a0a49f-norcet-tracker
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       build_type:
@@ -20,10 +31,10 @@ on:
         description: 'Version name (e.g. 1.0.3)'
         required: false
         default: ''
-  push:
-    branches: ['**']
-    tags: ['v*']
-  pull_request:
+
+# Needed to upload artifacts and to attach files to a GitHub Release.
+permissions:
+  contents: write
 
 concurrency:
   group: android-${{ github.ref }}
@@ -36,7 +47,9 @@ jobs:
     timeout-minutes: 30
 
     env:
-      # Release builds are the only ones that need signing secrets.
+      # `secrets` is not available in step-level `if`, so the signing check is
+      # resolved once here (job-level env may use it) and read as env.HAS_SIGNING_KEY.
+      HAS_SIGNING_KEY: ${{ secrets.KEYSTORE_BASE64 != '' }}
       BUILD_TYPE: ${{ github.event.inputs.build_type || (startsWith(github.ref, 'refs/tags/v') && 'release' || 'debug') }}
       VERSION_CODE: ${{ github.run_number }}
       VERSION_NAME: ${{ github.event.inputs.version_name || (startsWith(github.ref, 'refs/tags/v') && github.ref_name || '1.0.0') }}
@@ -54,7 +67,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Lint types
+      - name: Type check
         run: npx tsc --noEmit
 
       - name: Test
@@ -75,13 +88,15 @@ jobs:
       - name: Copy web build into the native project
         run: npx cap sync android
 
+      - name: Grant execute permission for gradlew
+        working-directory: android
+        run: chmod +x gradlew
+
       - name: Cache Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
       - name: Prepare release signing (optional)
-        if: env.BUILD_TYPE == 'release' && secrets.KEYSTORE_BASE64 != ''
+        if: env.BUILD_TYPE == 'release' && env.HAS_SIGNING_KEY == 'true'
         working-directory: android
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -98,10 +113,6 @@ jobs:
           EOF
           echo "Signed release build configured."
 
-      - name: Grant execute permission for gradlew
-        working-directory: android
-        run: chmod +x gradlew
-
       - name: Build debug APK
         if: env.BUILD_TYPE == 'debug'
         working-directory: android
@@ -110,9 +121,7 @@ jobs:
       - name: Build release APK + AAB
         if: env.BUILD_TYPE == 'release'
         working-directory: android
-        run: |
-          ./gradlew assembleRelease bundleRelease --no-daemon \
-            -PversionCode=$VERSION_CODE -PversionName=$VERSION_NAME
+        run: ./gradlew assembleRelease bundleRelease --no-daemon -PversionCode=$VERSION_CODE -PversionName=$VERSION_NAME
 
       - name: Upload debug APK
         if: env.BUILD_TYPE == 'debug'

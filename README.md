@@ -164,8 +164,18 @@ npm run cap:run      # build and install on a connected device / emulator
 
 ### CI: `.github/workflows/android.yml`
 
-Every push and PR type-checks, runs the test suite, builds the web bundle, syncs Capacitor and
-assembles a **debug APK** (uploaded as the `norcet-tracker-debug` artifact, kept 30 days).
+Runs on the working branch `arena/01a0a49f-norcet-tracker` (plus `v*` tags and manual dispatch) —
+when this lands on `main`, add `main` to the push branches in the workflow.
+
+Every push type-checks, runs the test suite, builds the web bundle, syncs Capacitor and assembles a
+**debug APK** (uploaded as the `norcet-tracker-debug` artifact, kept 30 days).
+
+Validate workflow edits locally before pushing — GitHub rejects a bad workflow file before any job
+starts, which looks like a run that fails instantly with no logs:
+
+```bash
+npm run lint:workflows   # actionlint over .github/workflows
+```
 
 Pushing a tag like `v1.0.0` — or running the workflow manually with `build_type: release` — also
 builds a **release APK and AAB**; tagged release builds are attached to the GitHub Release.
