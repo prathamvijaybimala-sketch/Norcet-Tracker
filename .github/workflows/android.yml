@@ -114,6 +114,13 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
+        with:
+          # v4 defaults to "tools platform-tools", but the legacy "tools"
+          # package was removed from the SDK repository (cmdline-tools 20.0
+          # images), which makes sdkmanager fail. AGP fetches platforms and
+          # build-tools itself; platform-tools (adb) is all we need extra.
+          # https://github.com/android-actions/setup-android/issues/537
+          packages: 'platform-tools'
 
       - name: Copy web build into the native project
         run: npx cap sync android
