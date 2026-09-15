@@ -65,43 +65,13 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: |
-          node --version
-          npm --version
-          if ! npm ci --loglevel=info 2>&1 | tee /tmp/ci-install.log; then
-            {
-              echo '## npm ci failed'
-              echo ''
-              echo '```'
-              tail -n 120 /tmp/ci-install.log
-              echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
-            # Surface the tail as check annotations, which are readable via
-            # the checks API even when the run log storage is unreachable.
-            tail -n 25 /tmp/ci-install.log | while IFS= read -r line; do
-              printf '::error title=npm ci failed::%s\n' "$line"
-            done
-            exit 1
-          fi
+        run: npm ci
 
       - name: Type check
         run: npx tsc --noEmit
 
       - name: Test
-        run: |
-          if ! npm test 2>&1 | tee /tmp/ci-test.log; then
-            {
-              echo '## Tests failed'
-              echo ''
-              echo '```'
-              tail -n 150 /tmp/ci-test.log
-              echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
-            tail -n 25 /tmp/ci-test.log | while IFS= read -r line; do
-              printf '::error title=npm test failed::%s\n' "$line"
-            done
-            exit 1
-          fi
+        run: npm test
 
       - name: Build web app
         run: npm run build
