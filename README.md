@@ -164,7 +164,7 @@ npm run cap:run      # build and install on a connected device / emulator
 
 ### CI: `.github/workflows/android.yml`
 
-Runs on the working branch `arena/01a0a49f-norcet-tracker` (plus `v*` tags and manual dispatch) —
+Runs on the working branch `arena/01a0a541-norcet-tracker` (plus `v*` tags and manual dispatch) —
 when this lands on `main`, add `main` to the push branches in the workflow.
 
 Every push type-checks, runs the test suite, builds the web bundle, syncs Capacitor and assembles a
