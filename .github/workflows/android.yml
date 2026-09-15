@@ -58,10 +58,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Node 22 (active LTS): jsdom 30 pulls undici 8, which needs >= 22.
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
 
       - name: Install dependencies
