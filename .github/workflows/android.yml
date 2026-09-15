@@ -89,12 +89,28 @@ jobs:
         if: failure()
         run: |
           set +e
-          sed 's/\x1b\[[0-9;]*m//g' test-output.txt > test-output-clean.txt
-          summary=$(grep -aE "^ *(FAIL|×|✗) |AssertionError|expected .* to|Tests  [0-9]+ failed" test-output-clean.txt | head -25 | tr '\n' ' | ')
-          echo "::error title=Test step failed::${summary:-no failure lines matched; see test-log artifact}"
-          tail -n 30 test-output-clean.txt | while IFS= read -r line; do
-            [ -n "$line" ] && echo "::notice title=test-log::${line}"
-          done
+          if [ ! -f test-output.txt ]; then
+            echo "::error title=No test log::test-output.txt was not created"
+            exit 0
+          fi
+          sed 's/\x1b\[[0-9;]*m//g' test-output.txt > test-output-clean.txt || true
+          grep -a 'FAIL' test-output-clean.txt > fail-lines.txt || true
+          head -n 20 fail-lines.txt > fail-top.txt || true
+          summary=$(tr '\n' '~' < fail-top.txt)
+          if [ -n "$summary" ]; then
+            echo "::error title=Test step failed::${summary}"
+          else
+            echo "::error title=Test step failed::no FAIL lines captured; see the test-log artifact"
+          fi
+          tail -n 25 test-output-clean.txt > tail-25.txt || true
+          n=0
+          while IFS= read -r line; do
+            n=$((n + 1))
+            if [ "$n" -gt 25 ]; then break; fi
+            if [ -z "$line" ]; then continue; fi
+            echo "::notice title=test-log::${line}"
+          done < tail-25.txt
+          exit 0
 
       - name: Build web app
         run: npm run build
