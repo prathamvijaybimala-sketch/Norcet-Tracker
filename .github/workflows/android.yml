@@ -1,0 +1,154 @@
+name: Android APK
+
+# Builds the Capacitor Android wrapper around the web app.
+#
+# Runs on this working branch only (plus tags and manual dispatch). To start
+# building releases once this lands on main, add "main" to the push branches
+# below.
+#
+#   push to the branch  -> debug APK, uploaded as a workflow artifact
+#   tag v1.2.3          -> release APK + AAB, attached to the GitHub Release
+#   workflow_dispatch   -> pick debug or release yourself
+#
+# Optional signed release builds: set the KEYSTORE_* repository secrets (see
+# README); without them release builds are unsigned.
+
+on:
+  push:
+    branches:
+      - arena/01a0a49f-norcet-tracker
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type'
+        required: true
+        default: debug
+        type: choice
+        options: [debug, release]
+      version_name:
+        description: 'Version name (e.g. 1.0.3)'
+        required: false
+        default: ''
+
+# Needed to upload artifacts and to attach files to a GitHub Release.
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ github.event.inputs.build_type || (startsWith(github.ref, 'refs/tags/v') && 'release' || 'debug') }} APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      # `secrets` is not available in step-level `if`, so the signing check is
+      # resolved once here (job-level env may use it) and read as env.HAS_SIGNING_KEY.
+      HAS_SIGNING_KEY: ${{ secrets.KEYSTORE_BASE64 != '' }}
+      BUILD_TYPE: ${{ github.event.inputs.build_type || (startsWith(github.ref, 'refs/tags/v') && 'release' || 'debug') }}
+      VERSION_CODE: ${{ github.run_number }}
+      VERSION_NAME: ${{ github.event.inputs.version_name || (startsWith(github.ref, 'refs/tags/v') && github.ref_name || '1.0.0') }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Test
+        run: npm test
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Copy web build into the native project
+        run: npx cap sync android
+
+      - name: Grant execute permission for gradlew
+        working-directory: android
+        run: chmod +x gradlew
+
+      - name: Cache Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Prepare release signing (optional)
+        if: env.BUILD_TYPE == 'release' && env.HAS_SIGNING_KEY == 'true'
+        working-directory: android
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > app/keystore.jks
+          cat > key.properties <<EOF
+          storeFile=keystore.jks
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+          echo "Signed release build configured."
+
+      - name: Build debug APK
+        if: env.BUILD_TYPE == 'debug'
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon -PversionCode=$VERSION_CODE -PversionName=$VERSION_NAME
+
+      - name: Build release APK + AAB
+        if: env.BUILD_TYPE == 'release'
+        working-directory: android
+        run: ./gradlew assembleRelease bundleRelease --no-daemon -PversionCode=$VERSION_CODE -PversionName=$VERSION_NAME
+
+      - name: Upload debug APK
+        if: env.BUILD_TYPE == 'debug'
+        uses: actions/upload-artifact@v4
+        with:
+          name: norcet-tracker-debug
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload release artifacts
+        if: env.BUILD_TYPE == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: norcet-tracker-release
+          path: |
+            android/app/build/outputs/apk/release/*.apk
+            android/app/build/outputs/bundle/release/*.aab
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Attach APK/AAB to the GitHub Release
+        if: env.BUILD_TYPE == 'release' && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            android/app/build/outputs/apk/release/*.apk
+            android/app/build/outputs/bundle/release/*.aab
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
