@@ -161,7 +161,7 @@ export function TimelineScreen() {
           <div className="tiny faint" style={{ marginBottom: 8 }}>
             Checkboxes work on any day, past or future - logging progress retroactively is normal.
           </div>
-          <TopicSection lectureIds={selectedDay.lectureIds} />
+          <TopicSection lectureIds={selectedDay.lectureIds} contextDate={selectedDay.date} />
         </Modal>
       ) : null}
     </div>

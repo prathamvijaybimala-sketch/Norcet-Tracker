@@ -37,6 +37,7 @@ import {
 } from '../lib/revision';
 import { defaultPlanConfig, downloadJSON, buildExportPayload, exportFileName, normalizePlanConfig } from '../lib/exportImport';
 import { hashPlanPassword, MIN_LOCK_LENGTH, sameHash } from '../lib/lock';
+import { topicActiveLectureIds } from '../lib/topicQuestions';
 import { clearAll, flushWrites, loadAll, normalizeSettings, saveKeyDebounced } from '../lib/storage';
 import { KEYS } from '../lib/storage';
 
@@ -547,11 +548,16 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
     },
 
     setTopicQuestions(topicId, value) {
-      const { curriculum } = get();
+      const { curriculum, scheduleByLecture, progress } = get();
+      // Scope the write to the topic's ACTIVE lectures (scheduled or already
+      // watched), the same set the checkbox is judged over - excluded /
+      // dropped lectures must never be flipped silently.
       const ids: string[] = [];
       for (const subject of curriculum) {
         for (const topic of subject.topics) {
-          if (topic.id === topicId) for (const l of topic.lectures) ids.push(l.id);
+          if (topic.id === topicId) {
+            for (const id of topicActiveLectureIds(topic, scheduleByLecture, progress)) ids.push(id);
+          }
         }
       }
       if (!ids.length) return;
@@ -684,10 +690,16 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
           }
           get().notify(`Backup saved to Documents as ${filename}.`);
           return;
-        } catch {
-          // Plugin unavailable - fall through to the web download below.
+        } catch (err) {
+          // A native failure must be VISIBLE. Falling through to the anchor
+          // download would silently reproduce the original "button does
+          // nothing" bug (the WebView ignores it) with zero way to know.
+          const msg = err instanceof Error ? err.message : String(err);
+          get().notify(`Export failed - the file was not saved (${msg}). Please try again.`);
+          return;
         }
       }
+      // Web build only: the anchor download works in a real browser.
       downloadJSON(filename, payload);
     },
 

@@ -1234,6 +1234,23 @@ textarea {
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   font-size: 13px;
+  /* A day finished is a small win - pop it in gently the moment it appears. */
+  animation: ok-pop 250ms ease-out;
+}
+
+@keyframes ok-pop {
+  0% {
+    transform: scale(0.92);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.03);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .list-reset {

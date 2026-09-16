@@ -11,12 +11,30 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import App from '../src/App';
 import { useAppStore } from '../src/store/appStore';
-import { addDays, dayOfYear, isISODate, todayISO } from '../src/lib/dates';
+import { addDays, dayOfYear, formatDate, isISODate, todayISO } from '../src/lib/dates';
 import { nextOffDayOnOrAfter } from '../src/lib/schedule';
 import { computePlanStats } from '../src/lib/stats';
+import { topicActiveLectureIds, topicQuestionsUnlocked } from '../src/lib/topicQuestions';
 import { STUDY_QUOTES } from '../src/lib/quotes';
 import { makeSubjects, hours } from './helpers';
 import type { PlanConfig } from '../src/types';
+
+/** Native-platform export path: flipped per test (defaults to the web path). */
+const capMock = vi.hoisted(() => ({
+  native: false,
+  writeFile: vi.fn(),
+  share: vi.fn(),
+}));
+vi.mock('@capacitor/core', () => ({
+  Capacitor: { isNativePlatform: () => capMock.native },
+}));
+vi.mock('@capacitor/filesystem', () => ({
+  Filesystem: { writeFile: capMock.writeFile },
+  Directory: { Documents: 'DOCUMENTS' },
+}));
+vi.mock('@capacitor/share', () => ({
+  Share: { share: capMock.share },
+}));
 
 const demo = readFileSync(resolve(__dirname, '../public/demo-curriculum.json'), 'utf8');
 
@@ -160,10 +178,26 @@ describe('today screen', () => {
     expect(state().progress[firstId].lectureWatched).toBe(false);
     expect(state().progress[firstId].notesDone).toBe(false);
 
-    // Questions is a single per-topic checkbox (at the end of the topic) and
-    // ticks the whole topic at once.
+    // Questions is a single per-topic checkbox. The demo's first topic spans
+    // TWO days, so on day one there is nothing to confirm yet - the checkbox
+    // appears on the topic's LAST scheduled day (opened via the Timeline).
     const topic = state().lectureIndex.get(firstId)!.topic;
-    fireEvent.click(screen.getByRole('checkbox', { name: `Questions done for ${topic.name}` }));
+    expect(
+      screen.queryByRole('checkbox', { name: `Questions done for ${topic.name}` }),
+    ).toBeNull();
+
+    const topicIds = topic.lectures.map((l) => l.id);
+    const lastDay = topicIds.map((id) => state().scheduleByLecture.get(id)!).sort().pop()!;
+    fireEvent.click(screen.getByRole('button', { name: /Timeline/ }));
+    const cell = [...document.querySelectorAll('.day-cell.has-plan')].find(
+      (c) => (c as HTMLElement).title!.startsWith(formatDate(lastDay)),
+    ) as HTMLElement;
+    fireEvent.click(cell);
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(
+      within(dialog).getByRole('checkbox', { name: `Questions done for ${topic.name}` }),
+    );
+    // One tick covers the whole topic, including lectures not on this day.
     for (const l of topic.lectures) {
       expect(state().progress[l.id]?.questionsDone).toBe(true);
     }
@@ -421,6 +455,29 @@ describe('timeline screen', () => {
     expect(decCells.indexOf(dec1 as HTMLElement)).toBe(2);
   });
 
+  /** Expected Questions checkboxes for a study day, per the unlock rule. */
+  function expectedTopicCheckboxes(date: string): number {
+    const st = useAppStore.getState();
+    const day = st.schedule.find((d) => d.date === date)!;
+    const dayTopics = new Set(day.lectureIds.map((id) => st.lectureIndex.get(id)!.topic.id));
+    let n = 0;
+    for (const sub of st.curriculum) {
+      for (const t of sub.topics) {
+        if (!dayTopics.has(t.id)) continue;
+        if (
+          topicQuestionsUnlocked(
+            topicActiveLectureIds(t, st.scheduleByLecture, st.progress),
+            st.scheduleByLecture,
+            date,
+          )
+        ) {
+          n++;
+        }
+      }
+    }
+    return n;
+  }
+
   it('uses the same accordion in the day detail modal (one open row)', async () => {
     await boot();
     await importDemo();
@@ -430,11 +487,78 @@ describe('timeline screen', () => {
     fireEvent.click(cells[0] as HTMLElement);
     const dialog = (await screen.findByRole('dialog')) as HTMLElement;
     expect(dialog.querySelectorAll('.lecture.acc.open')).toHaveLength(1);
-    // The Questions checkbox stays a single per-topic control in the header.
+    // The Questions checkbox stays a single per-topic control in the header -
+    // present only for topics that reach their LAST scheduled lecture on this
+    // day (a topic split across days is not confirmable on an early day).
+    const firstDay = useAppStore.getState().schedule.find((d) => d.type === 'study')!.date;
     expect(dialog.querySelectorAll('.topic-block').length).toBeGreaterThan(0);
+    // The demo's first topic spans two days, so day one shows NO checkbox.
+    expect(expectedTopicCheckboxes(firstDay)).toBe(0);
     expect(
-      within(dialog).getAllByRole('checkbox', { name: /Questions done for / }).length,
-    ).toBe(dialog.querySelectorAll('.topic-block').length);
+      within(dialog).queryAllByRole('checkbox', { name: /Questions done for / }).length,
+    ).toBe(expectedTopicCheckboxes(firstDay));
+
+    // The NEXT study day is the topic's last day: its checkbox appears there.
+    const foot = dialog.querySelector('.modal-foot') as HTMLElement;
+    fireEvent.click(within(foot).getByRole('button', { name: 'Close' }));
+    fireEvent.click(cells[1] as HTMLElement);
+    const dialog2 = (await screen.findByRole('dialog')) as HTMLElement;
+    const secondDay = useAppStore.getState().schedule.filter((d) => d.type === 'study')[1].date;
+    expect(expectedTopicCheckboxes(secondDay)).toBe(1);
+    expect(
+      within(dialog2).queryAllByRole('checkbox', { name: /Questions done for / }).length,
+    ).toBe(expectedTopicCheckboxes(secondDay));
+  });
+});
+
+describe('topic questions (cross-day)', () => {
+  const SPLIT = JSON.stringify({
+    'Split Subject': {
+      instructor: 'Dr S',
+      topics: [
+        {
+          topic: 'Big Topic',
+          subtopics: [
+            { name: 'L1', duration: '02:00:00' },
+            { name: 'L2', duration: '02:00:00' },
+            { name: 'L3', duration: '02:00:00' },
+          ],
+        },
+      ],
+    },
+  });
+
+  it('hides the checkbox on partial days and ticks the whole topic on the last day', async () => {
+    await boot();
+    useAppStore.getState().importCurriculum(SPLIT);
+    // 2h lectures, 3h day, 1x speed -> one lecture per day: the topic spans three days.
+    useAppStore.getState().updatePlan({ playbackSpeed: 1 });
+    const state = useAppStore.getState();
+    const ids = state.schedule.filter((d) => d.type === 'study').map((d) => d.lectureIds[0]);
+    expect(ids).toHaveLength(3);
+
+    await screen.findByText(/Today we.re studying/);
+    // Day one: the topic is not finished yet, so there is no checkbox to lie
+    // about - it is not rendered at all.
+    expect(screen.queryByText('Questions for this topic')).toBeNull();
+
+    // The topic's LAST day (opened in the Timeline) is where the checkbox lives.
+    const lastDay = state.scheduleByLecture.get(ids[2])!;
+    fireEvent.click(screen.getByRole('button', { name: /Timeline/ }));
+    const cell = [...document.querySelectorAll('.day-cell.has-plan')].find(
+      (c) => (c as HTMLElement).title!.startsWith(formatDate(lastDay)),
+    ) as HTMLElement;
+    fireEvent.click(cell);
+    const dialog = await screen.findByRole('dialog');
+    const box = within(dialog).getByRole('checkbox', { name: 'Questions done for Big Topic' });
+
+    // One tick covers the WHOLE topic - including L1/L2, which are not in
+    // this day's slice (the old bug ticked them invisibly; now it is a single
+    // deliberate action that is also VISIBLE on the day it applies).
+    fireEvent.click(box);
+    const after = useAppStore.getState();
+    for (const id of ids) expect(after.progress[id]?.questionsDone).toBe(true);
+    expect((box as HTMLInputElement).checked).toBe(true);
   });
 });
 
@@ -652,6 +776,67 @@ describe('side menu and data screen', () => {
     // The repaired plan actually generates days.
     expect(useAppStore.getState().schedule.length).toBeGreaterThan(0);
     expect(useAppStore.getState().route).toBe('today');
+  });
+
+  it('on native, writes the backup to Documents and opens the share sheet', async () => {
+    await boot();
+    await importDemo();
+    await openMenu();
+    fireEvent.click(screen.getByRole('button', { name: /Data/ }));
+    await screen.findByText('Backup');
+
+    let webDownloads = 0;
+    const origCreate = URL.createObjectURL;
+    URL.createObjectURL = () => {
+      webDownloads++;
+      return 'blob:test';
+    };
+    capMock.native = true;
+    capMock.writeFile.mockResolvedValueOnce({
+      uri: 'file:///storage/emulated/0/Documents/norcet-tracker-backup.json',
+    });
+    capMock.share.mockResolvedValueOnce({});
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Export data (JSON)' }));
+      expect(await screen.findByText(/Backup saved to Documents/)).toBeTruthy();
+      expect(capMock.writeFile).toHaveBeenCalledTimes(1);
+      expect(capMock.share).toHaveBeenCalledTimes(1);
+      // The anchor download (broken in the WebView) must not be attempted.
+      expect(webDownloads).toBe(0);
+    } finally {
+      capMock.native = false;
+      capMock.writeFile.mockReset();
+      capMock.share.mockReset();
+      URL.createObjectURL = origCreate;
+    }
+  });
+
+  it('on native failure, shows a real error instead of silently doing nothing', async () => {
+    await boot();
+    await importDemo();
+    await openMenu();
+    fireEvent.click(screen.getByRole('button', { name: /Data/ }));
+    await screen.findByText('Backup');
+
+    let webDownloads = 0;
+    const origCreate = URL.createObjectURL;
+    URL.createObjectURL = () => {
+      webDownloads++;
+      return 'blob:test';
+    };
+    capMock.native = true;
+    capMock.writeFile.mockRejectedValueOnce(new Error('storage full'));
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Export data (JSON)' }));
+      // A VISIBLE error - the silent fall-through to the (broken) web
+      // download used to look exactly like "the button does nothing".
+      expect(await screen.findByText(/Export failed/)).toBeTruthy();
+      expect(webDownloads).toBe(0);
+    } finally {
+      capMock.native = false;
+      capMock.writeFile.mockReset();
+      URL.createObjectURL = origCreate;
+    }
   });
 });
 

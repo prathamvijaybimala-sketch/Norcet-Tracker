@@ -349,7 +349,7 @@ export function TodayScreen() {
                 tone={completion.allDone ? 'ok' : 'accent'}
               />
             </div>
-            <TopicSection lectureIds={day.lectureIds} showContext={false} />
+            <TopicSection lectureIds={day.lectureIds} showContext={false} contextDate={today} />
             {completion.allDone ? (
               <div className="ok-box" style={{ marginTop: 14 }}>
                 Everything planned for today is watched. Nice. Tomorrow's list is already
@@ -397,7 +397,7 @@ export function TodayScreen() {
           </button>
           <div className={`done-list ${doneOpen ? 'open' : ''}`}>
             <div className="done-list-inner">
-              <TopicSection lectureIds={doneToday} showContext={false} accordion={false} />
+              <TopicSection lectureIds={doneToday} showContext={false} accordion={false} contextDate={today} />
             </div>
           </div>
         </div>
