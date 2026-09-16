@@ -793,8 +793,12 @@ describe('general', () => {
     for (const t of biggest.topics) {
       for (const l of t.lectures) {
         expect(state().progress[l.id]?.lectureWatched).toBe(true);
+        expect(state().progress[l.id]?.preDone).toBe(true); // "already done before the app"
       }
     }
+    // And the plan recalculated WITHOUT the subject: no day belongs to it,
+    // and the calendar shrank accordingly.
+    expect(state().schedule.every((d) => d.subjectId !== biggest.id)).toBe(true);
     unmount();
   });
 });

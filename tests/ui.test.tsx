@@ -636,13 +636,16 @@ describe('plan screen', () => {
     expect(useAppStore.getState().progress).toEqual({});
   });
 
-  it('bulk-marks a subject done - the fixed plan keeps its days, the remaining count drops', async () => {
+  it('bulk-marks a subject as ALREADY done - the plan recalculates WITHOUT it', async () => {
     await boot();
     await importDemo();
     await openMenu();
     fireEvent.click(screen.getByRole('button', { name: /Plan/ }));
     await screen.findByText('Live preview');
     fireEvent.click(screen.getByRole('button', { name: 'Mark done' }));
+
+    const before = useAppStore.getState().schedule;
+    const beforeFinish = computePlanStats(before).finishDate;
 
     fireEvent.click(await screen.findByRole('button', { name: /Mark entire subject done/ }));
     const dialog = await screen.findByRole('dialog');
@@ -653,13 +656,24 @@ describe('plan screen', () => {
     const totalInSubject = subject.topics.reduce((n, t) => n + t.lectures.length, 0);
     const watchedCount = Object.values(state.progress).filter((p) => p.lectureWatched).length;
     expect(watchedCount).toBe(totalInSubject);
-    // The calendar is FIXED: the subject's days still exist (now fully done),
-    // so the plan neither shrinks nor stretches.
-    expect(state.schedule.some((d) => d.subjectId === subject.id)).toBe(true);
-    // But the remaining work reflects what is watched.
+    // Every marked lecture is flagged pre-done, with no completedDate (so it
+    // never shows in "watched today").
+    for (const t of subject.topics) {
+      for (const l of t.lectures) {
+        expect(state.progress[l.id]?.preDone).toBe(true);
+        expect(state.progress[l.id]?.completedDate).toBeNull();
+      }
+    }
+    // The plan was RECALCULATED: no day belongs to the marked subject any
+    // more, the calendar shrank, and the finish date moved earlier.
+    expect(state.schedule.some((d) => d.subjectId === subject.id)).toBe(false);
+    expect(state.schedule.length).toBeLessThan(before.length);
     const stats = computePlanStats(state.schedule, state.progress);
     expect(stats.remainingLectures).toBe(767 - totalInSubject);
-    expect(await screen.findByText(/Updated \d+ lectures/)).toBeTruthy();
+    if (stats.finishDate && beforeFinish) {
+      expect(stats.finishDate < beforeFinish).toBe(true);
+    }
+    expect(await screen.findByText(/recalculates without them/)).toBeTruthy();
   });
 });
 
@@ -808,6 +822,14 @@ describe('side menu and data screen', () => {
       expect(capMock.share).toHaveBeenCalledTimes(1);
       // The anchor download (broken in the WebView) must not be attempted.
       expect(webDownloads).toBe(0);
+      // The native Filesystem API demands BASE64 `data`. A regression here is
+      // the "The supplied data is not valid base64 content" export failure:
+      // the payload must encode to real base64 that round-trips to the JSON.
+      const writeArgs = capMock.writeFile.mock.calls[0]![0] as { path: string; data: string };
+      expect(writeArgs.data).toMatch(/^[A-Za-z0-9+/=]+$/);
+      const roundTrip = JSON.parse(Buffer.from(writeArgs.data, 'base64').toString('utf8'));
+      expect(roundTrip.appVersion).toBeTruthy();
+      expect(roundTrip.curriculum).toHaveLength(8);
     } finally {
       capMock.native = false;
       capMock.writeFile.mockReset();

@@ -181,8 +181,9 @@ describe('section 8.2 sanity check', () => {
     const { subjects, planConfig } = setup();
     // Fast-forward: it is now 2026-12-01 and nothing has been watched.
     const today = '2026-12-01';
+    const idx = buildLectureIndex(subjects);
     let schedule = generateSchedule(subjects, planConfig, {});
-    let stats = computeTodayStats(subjects, planConfig, {}, schedule, today);
+    let stats = computeTodayStats(planConfig, {}, schedule, today, idx);
     expect(stats.backlogLectures).toBeGreaterThan(100);
     expect(stats.deltaDays).toBeLessThan(-10);
 
@@ -192,7 +193,7 @@ describe('section 8.2 sanity check', () => {
     // Explicit catch-up moves the whole remaining pool to today.
     const caughtUp = catchUpPlan(planConfig, today);
     schedule = generateSchedule(subjects, caughtUp, {});
-    stats = computeTodayStats(subjects, caughtUp, {}, schedule, today);
+    stats = computeTodayStats(caughtUp, {}, schedule, today, idx);
     expect(schedule[0].date).toBe(today);
     expect(stats.backlogLectures).toBe(0);
     // Re-planning from today necessarily finishes later than the original

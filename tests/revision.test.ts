@@ -227,7 +227,7 @@ describe('stats helpers', () => {
     const idx = buildLectureIndex(subjects);
     // Two days in, nothing watched -> behind, with the past days' lectures as backlog.
     const schedule = generateSchedule(subjects, plan, {});
-    const behind = computeTodayStats(subjects, plan, {}, schedule, '2026-09-17', idx);
+    const behind = computeTodayStats(plan, {}, schedule, '2026-09-17', idx);
     expect(behind.backlogLectures).toBe(6);
     expect(behind.deltaDays).toBeLessThan(0);
 
@@ -241,7 +241,7 @@ describe('stats helpers', () => {
     expect(scheduleAfter.map((d) => d.lectureIds.length)).toEqual(
       schedule.map((d) => d.lectureIds.length),
     );
-    const done = computeTodayStats(subjects, plan, progress, scheduleAfter, '2026-09-17', idx);
+    const done = computeTodayStats(plan, progress, scheduleAfter, '2026-09-17', idx);
     expect(done.backlogLectures).toBe(0);
     expect(done.deltaDays).toBe(0);
   });

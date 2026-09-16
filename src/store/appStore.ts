@@ -35,7 +35,14 @@ import {
   skipRevision as skipRevisionPure,
   syncRevisionQueue,
 } from '../lib/revision';
-import { defaultPlanConfig, downloadJSON, buildExportPayload, exportFileName, normalizePlanConfig } from '../lib/exportImport';
+import {
+  defaultPlanConfig,
+  downloadJSON,
+  buildExportPayload,
+  exportFileName,
+  normalizePlanConfig,
+  utf8ToBase64,
+} from '../lib/exportImport';
 import { hashPlanPassword, MIN_LOCK_LENGTH, sameHash } from '../lib/lock';
 import { topicActiveLectureIds } from '../lib/topicQuestions';
 import { clearAll, flushWrites, loadAll, normalizeSettings, saveKeyDebounced } from '../lib/storage';
@@ -106,6 +113,8 @@ type Actions = {
   setFlag: (lectureId: string, flag: ProgressFlag, value: boolean) => void;
   setFlags: (lectureId: string, patch: MarkFlags) => void;
   bulkMark: (lectureIds: string[], patch: MarkFlags) => void;
+  /** Plan tab "Mark done" = completed before the app: exclude from the plan + re-pack. */
+  markPreDone: (lectureIds: string[], value: boolean, extras?: boolean) => void;
 
   setRevisionIntervals: (intervals: number[]) => void;
   reviewLecture: (lectureId: string) => void;
@@ -167,12 +176,19 @@ function derive(
   };
 }
 
-/** Write one progress entry, maintaining `completedDate`. */
+/**
+ * Write one progress entry, maintaining `completedDate` (and `preDone`).
+ *
+ * `preDoneMode` (the Plan tab's "Mark done" = completed BEFORE using the
+ * app): the lecture is flagged preDone and its completedDate is cleared -
+ * it was not completed today, so it never appears in "watched today".
+ */
 function writeProgress(
   progress: ProgressStore,
   lectureId: string,
   patch: MarkFlags,
   today: string,
+  preDoneMode = false,
 ): ProgressStore {
   const current = progress[lectureId];
   const base: LectureProgress = current ?? {
@@ -184,9 +200,15 @@ function writeProgress(
   };
   const next: LectureProgress = { ...base, ...patch };
   if (patch.lectureWatched === true) {
-    if (next.completedDate == null) next.completedDate = today;
+    if (preDoneMode) {
+      next.preDone = true;
+      next.completedDate = null;
+    } else if (next.completedDate == null) {
+      next.completedDate = today;
+    }
   } else if (patch.lectureWatched === false) {
     next.completedDate = null;
+    next.preDone = false; // unwatched => not "pre-done" anymore
   }
   return { ...progress, [lectureId]: next };
 }
@@ -196,9 +218,10 @@ function writeBulk(
   lectureIds: string[],
   patch: MarkFlags,
   today: string,
+  preDoneMode = false,
 ): ProgressStore {
   let next = progress;
-  for (const id of lectureIds) next = writeProgress(next, id, patch, today);
+  for (const id of lectureIds) next = writeProgress(next, id, patch, today, preDoneMode);
   return next;
 }
 
@@ -231,8 +254,16 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
     lastSaved = { ...versions };
   };
 
-  /** Commit a partial state update, re-deriving + persisting as needed. */
-  const commit = (patch: Partial<AppState>, changed: Changed) => {
+  /**
+   * Commit a partial state update, re-deriving + persisting as needed.
+   *
+   * `repack` = the progress change altered which lectures belong to the plan
+   * (Plan-tab "already done" marks) - re-derive so the calendar excludes
+   * them. In-app watching never repacks: the schedule is a FIXED calendar
+   * and progress is an overlay (this is what makes "today ends when
+   * today's own lectures are watched" true).
+   */
+  const commit = (patch: Partial<AppState>, changed: Changed, repack = false) => {
     const state = get();
     const next = {
       curriculum: patch.curriculum ?? state.curriculum,
@@ -240,11 +271,9 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
       progress: patch.progress ?? state.progress,
       revision: patch.revision ?? state.revision,
     };
-    // The schedule is a FIXED calendar: it is re-derived only when the plan
-    // or the curriculum changes. Watching lectures never re-packs the plan -
-    // progress is an overlay on the schedule (this is what makes "today ends
-    // when today's own lectures are watched" true).
-    const needsDerive = Boolean(changed.curriculum || changed.plan);
+    const needsDerive = Boolean(
+      changed.curriculum || changed.plan || (repack && changed.progress),
+    );
     const versions: Versions = {
       curriculum: state.versions.curriculum + (changed.curriculum ? 1 : 0),
       plan: state.versions.plan + (changed.plan ? 1 : 0),
@@ -594,6 +623,44 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
       get().notify(`Updated ${lectureIds.length} lecture${lectureIds.length === 1 ? '' : 's'}.`);
     },
 
+    /**
+     * The Plan tab's "Mark done": the student completed these lectures
+     * BEFORE using the app. They are flagged preDone, excluded from the
+     * schedule, and the plan recalculates without them (re-pack). Unticking
+     * puts them back into the plan.
+     */
+    markPreDone(lectureIds, value, extras = false) {
+      if (!lectureIds.length) return;
+      const { progress, revision, planConfig } = get();
+      const patch: MarkFlags = value
+        ? { lectureWatched: true, notesDone: extras, questionsDone: extras }
+        : { lectureWatched: false };
+      const nextProgress = writeBulk(progress, lectureIds, patch, todayISO(), true);
+      const nextRevision = syncRevision(nextProgress, revision, planConfig.revisionIntervals);
+      // Only re-pack when the SET of pre-done lectures actually changed.
+      // (Unticking an in-app-watched lecture doesn't change that set, so the
+      // fixed calendar is left alone.)
+      const preDoneOf = (store: ProgressStore, id: string) => store[id]?.preDone === true;
+      let changed = false;
+      for (const id of lectureIds) {
+        if (preDoneOf(progress, id) !== preDoneOf(nextProgress, id)) {
+          changed = true;
+          break;
+        }
+      }
+      commit(
+        { progress: nextProgress, revision: nextRevision },
+        { progress: true, revision: nextRevision !== revision },
+        changed,
+      );
+      if (!changed) return;
+      get().notify(
+        value
+          ? `${lectureIds.length} lecture${lectureIds.length === 1 ? '' : 's'} marked as already done - the plan recalculates without them.`
+          : `${lectureIds.length} lecture${lectureIds.length === 1 ? '' : 's'} put back into the plan.`,
+      );
+    },
+
     setRevisionIntervals(intervals) {
       const cleaned = intervals.map((n) => Math.max(1, Math.round(n))).filter((n) => Number.isFinite(n));
       get().updatePlan({
@@ -681,11 +748,13 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
       // write the file to Documents and open the system share sheet instead.
       if (Capacitor.isNativePlatform()) {
         try {
+          // Filesystem.writeFile's `data` must be BASE64 (the native side
+          // validates it - raw JSON fails with "not valid base64 content").
           const { uri } = await Filesystem.writeFile({
             path: filename,
             directory: Directory.Documents,
             recursive: true,
-            data: JSON.stringify(payload, null, 2),
+            data: utf8ToBase64(JSON.stringify(payload, null, 2)),
           });
           try {
             await Share.share({ title: 'NORCET Tracker backup', files: [uri] });

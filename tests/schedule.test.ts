@@ -86,6 +86,58 @@ describe('generateSchedule', () => {
     expect(dayA.date).toBe(START);
   });
 
+  it('4b. lectures marked pre-done from the Plan tab are EXCLUDED from the plan', () => {
+    const subjects = makeSubjects([hours('A', 1, 1), hours('B', 1)]);
+    // A's lectures were completed BEFORE using the app (Plan tab):
+    // watched + preDone.
+    const progress: Record<string, {
+      lectureId: string; lectureWatched: boolean; notesDone: boolean;
+      questionsDone: boolean; completedDate: string | null; preDone: boolean;
+    }> = {};
+    for (const l of subjects[0].topics[0].lectures) {
+      progress[l.id] = {
+        lectureId: l.id,
+        lectureWatched: true,
+        notesDone: false,
+        questionsDone: false,
+        completedDate: null,
+        preDone: true,
+      };
+    }
+    const schedule = generateSchedule(
+      subjects,
+      plan({
+        subjectOrder: subjects.map((s) => s.id),
+        dailyHours: 3,
+        playbackSpeed: 1,
+        bufferDaysBySubject: { [subjects[0].id]: 10, [subjects[1].id]: 10 },
+      }),
+      progress,
+    );
+    // A is gone from the calendar entirely - no days AND no buffer for it -
+    // and B's plan starts on the very first study day.
+    expect(schedule.every((d) => d.subjectId !== subjects[0].id)).toBe(true);
+    expect(schedule.filter((d) => d.type === 'study')).toHaveLength(1);
+    expect(schedule.filter((d) => d.type === 'buffer')).toHaveLength(10);
+    expect(schedule[0].date).toBe(START);
+    expect(schedule[0].lectureIds).toEqual(subjects[1].topics[0].lectures.map((l) => l.id));
+
+    // Contrast: the SAME lectures marked watched in-app (no preDone) KEEP
+    // their days - only Plan-tab marks exclude work from the plan.
+    const inApp = watched(subjects, (name) => name === 'A');
+    const schedule2 = generateSchedule(
+      subjects,
+      plan({
+        subjectOrder: subjects.map((s) => s.id),
+        dailyHours: 3,
+        playbackSpeed: 1,
+        bufferDaysBySubject: { [subjects[0].id]: 10, [subjects[1].id]: 10 },
+      }),
+      inApp,
+    );
+    expect(schedule2.filter((d) => d.type === 'study')).toHaveLength(2);
+  });
+
   it('5. leave days push lectures to the next available study day', () => {
     const subjects = makeSubjects([hours('A', 1, 1, 1, 1, 1)]);
     const schedule = generateSchedule(

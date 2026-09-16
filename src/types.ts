@@ -118,6 +118,14 @@ export type LectureProgress = {
   questionsDone: boolean;
   /** ISO `YYYY-MM-DD`, set when `lectureWatched` flips to true, cleared if unchecked. */
   completedDate: string | null;
+  /**
+   * True when the Plan tab's "Mark done" marked this lecture: the student
+   * completed it BEFORE using the app. The scheduler excludes such lectures
+   * (the plan recalculates without them), and they never appear in
+   * "watched today" (completedDate stays null). In-app watching never sets
+   * this flag - those lectures stay on their fixed schedule days.
+   */
+  preDone?: boolean;
 };
 
 export type ProgressStore = Record<string, LectureProgress>;

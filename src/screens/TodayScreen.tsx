@@ -273,7 +273,6 @@ function TodayHoursControl() {
 }
 
 export function TodayScreen() {
-  const curriculum = useAppStore((s) => s.curriculum);
   const planConfig = useAppStore((s) => s.planConfig);
   const progress = useAppStore((s) => s.progress);
   const revision = useAppStore((s) => s.revision);
@@ -288,8 +287,8 @@ export function TodayScreen() {
   const today = todayISO();
 
   const stats = useMemo(
-    () => computeTodayStats(curriculum, planConfig, progress, schedule, today, lectureIndex),
-    [curriculum, planConfig, progress, schedule, today, lectureIndex],
+    () => computeTodayStats(planConfig, progress, schedule, today, lectureIndex),
+    [planConfig, progress, schedule, today, lectureIndex],
   );
   const day = scheduleByDate.get(today);
   const completion = useMemo(

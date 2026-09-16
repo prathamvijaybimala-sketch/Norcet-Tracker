@@ -145,7 +145,8 @@ export function generateSchedule(
   //    and nothing from tomorrow slides in to replace them.
   //  - CATCH-UP (backlogAnchor set by "shift the schedule"): re-spread only
   //    the REMAINING (unwatched) lectures from the anchor date, the way the
-  //    Backlog tab promises.
+  //    Backlog tab promises. (Pre-completed lectures are watched too, so
+  //    this mode excludes them as well.)
   const reSpread = Boolean(planConfig.backlogAnchor);
 
   for (const subjectId of planConfig.subjectOrder) {
@@ -156,6 +157,11 @@ export function generateSchedule(
     for (const topic of subject.topics) {
       for (const lecture of topic.lectures) {
         if (reSpread && !isRemaining(progress, lecture.id)) continue;
+        // Marked "done" from the Plan tab = completed before using the app:
+        // it is not part of the study plan at all (the plan is recalculated
+        // without it). In-app watched lectures are NOT excluded - they keep
+        // their fixed schedule days.
+        if (!reSpread && progress[lecture.id]?.preDone) continue;
         if (offDayLectureSet.has(lecture.id)) continue; // waiting on its off day
         remaining.push({ lecture, eff: Math.ceil(lecture.durationSec / speed) });
       }

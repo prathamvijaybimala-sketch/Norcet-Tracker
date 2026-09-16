@@ -34,6 +34,25 @@ export function exportFileName(date = new Date()): string {
   return `${EXPORT_FILE_PREFIX}-${stamp}.json`;
 }
 
+/**
+ * UTF-8-safe base64 for the native export path: @capacitor/filesystem's
+ * `writeFile` only accepts base64 `data` (raw JSON fails on the native side
+ * with "The supplied data is not valid base64 content").
+ *
+ * `btoa` alone is Latin-1 only and throws on non-Latin-1 text (curly quotes
+ * in names, other scripts), so encode via TextEncoder first, and build the
+ * binary string in chunks so very large backups don't blow the call stack.
+ */
+export function utf8ToBase64(str: string): string {
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+
 export function downloadJSON(filename: string, data: unknown): void {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);

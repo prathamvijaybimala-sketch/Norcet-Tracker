@@ -162,7 +162,6 @@ export type TodayStats = {
  * while the delta says "overall, how far off pace are you".
  */
 export function computeTodayStats(
-  curriculum: Subject[],
   planConfig: PlanConfig,
   progress: ProgressStore,
   schedule: ScheduleDay[],
@@ -188,17 +187,19 @@ export function computeTodayStats(
     }
   }
 
-  const planSubjects = new Set(planConfig.subjectOrder);
+  // Pace is measured against the plan AS PACKED (lectures pre-marked done
+  // from the Plan tab are excluded from it, so they are not part of the
+  // expected work either).
   let totalEffSec = 0;
   let actualSec = 0;
-  for (const subject of curriculum) {
-    if (!planSubjects.has(subject.id)) continue;
-    for (const topic of subject.topics) {
-      for (const lecture of topic.lectures) {
-        const eff = lecture.durationSec / speed;
-        totalEffSec += eff;
-        if (progress[lecture.id]?.lectureWatched) actualSec += eff;
-      }
+  for (const day of schedule) {
+    if (day.type !== 'study') continue;
+    for (const id of day.lectureIds) {
+      const ref = lectureIndex.get(id);
+      if (!ref) continue;
+      const eff = ref.lecture.durationSec / speed;
+      totalEffSec += eff;
+      if (progress[id]?.lectureWatched) actualSec += eff;
     }
   }
 

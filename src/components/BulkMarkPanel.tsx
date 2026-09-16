@@ -10,16 +10,17 @@ const PAGE = 60;
 /**
  * Bulk mark-done (section 3.5): per subject, per topic and per lecture.
  *
- * Marking 50 lectures done one at a time is unacceptable, so this panel works at
- * whichever granularity the student thinks in: "I already know most of Obs-Gyn",
- * "this whole topic is done", or tick individual lectures.
+ * This panel is for work completed BEFORE using the app: "I already know most
+ * of Obs-Gyn", "this whole topic is done before I started". Marking here
+ * excludes the lectures from the study plan - the schedule recalculates
+ * without them (and their buffers). Lectures you watch day by day are ticked
+ * on the Today screen instead; those keep their fixed schedule days.
  */
 export function BulkMarkPanel() {
   const curriculum = useAppStore((s) => s.curriculum);
   const progress = useAppStore((s) => s.progress);
   const planConfig = useAppStore((s) => s.planConfig);
-  const bulkMark = useAppStore((s) => s.bulkMark);
-  const setFlag = useAppStore((s) => s.setFlag);
+  const markPreDone = useAppStore((s) => s.markPreDone);
   const theme = useAppStore((s) => s.theme);
 
   const [subjectId, setSubjectId] = useState<string>('');
@@ -38,7 +39,7 @@ export function BulkMarkPanel() {
   );
 
   const apply = (ids: string[]) => {
-    bulkMark(ids, { lectureWatched: true, notesDone: alsoExtras, questionsDone: alsoExtras });
+    markPreDone(ids, true, alsoExtras);
     setConfirm(null);
   };
 
@@ -210,7 +211,7 @@ export function BulkMarkPanel() {
                           <input
                             type="checkbox"
                             checked={Boolean(p?.lectureWatched)}
-                            onChange={(e) => setFlag(lecture.id, 'lectureWatched', e.target.checked)}
+                            onChange={(e) => markPreDone([lecture.id], e.target.checked)}
                           />
                           <span className="check-label truncate">{lecture.name}</span>
                         </label>
@@ -247,12 +248,12 @@ export function BulkMarkPanel() {
         >
           <p className="small">
             {confirm.ids.length} lecture{confirm.ids.length === 1 ? '' : 's'} will be marked as
-            watched{alsoExtras ? ', with notes and questions done' : ''}, dated today. They keep
-            their scheduled days - the plan never reshuffles just because lectures are done.
+            <b> already done</b> (completed before using the app)
+            {alsoExtras ? ', with notes and questions done' : ''}. The plan recalculates
+            without them, so the finish date can move earlier.
           </p>
           <p className="small muted">
-            This only touches the <b>watched</b> flag{alsoExtras ? ' plus notes/questions' : ''} -
-            nothing else is changed and you can untick anything later.
+            Unticking them later puts them back into the plan.
           </p>
         </Modal>
       ) : null}
