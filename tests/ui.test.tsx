@@ -5,7 +5,7 @@
  * React components (no backend, no IndexedDB - storage falls back to
  * localStorage in jsdom).
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -29,6 +29,12 @@ async function boot() {
 async function importDemo() {
   useAppStore.getState().importCurriculum(demo);
   await waitFor(() => expect(useAppStore.getState().curriculum.length).toBe(8));
+}
+
+/** Plan and Data live in the hamburger side menu (not the bottom row). */
+async function openMenu() {
+  fireEvent.click(await screen.findByRole('button', { name: 'Open menu' }));
+  await screen.findByRole('button', { name: /Plan/ });
 }
 
 describe('import screen', () => {
@@ -406,7 +412,8 @@ describe('plan screen', () => {
   it('previews the finish date and reacts to pacing changes', async () => {
     await boot();
     await importDemo();
-    fireEvent.click(await screen.findByRole('button', { name: /Plan/ }));
+    await openMenu();
+    fireEvent.click(screen.getByRole('button', { name: /Plan/ }));
     expect(await screen.findByText('Live preview')).toBeTruthy();
     expect(screen.getByText(/you'll finish/)).toBeTruthy();
 
@@ -418,7 +425,8 @@ describe('plan screen', () => {
   it('supports excluding a subject and reordering', async () => {
     await boot();
     await importDemo();
-    fireEvent.click(await screen.findByRole('button', { name: /Plan/ }));
+    await openMenu();
+    fireEvent.click(screen.getByRole('button', { name: /Plan/ }));
     await screen.findByText('Live preview');
 
     const order = [...useAppStore.getState().planConfig.subjectOrder];
@@ -436,7 +444,8 @@ describe('plan screen', () => {
   it('bulk-marks a subject done and shrinks the plan', async () => {
     await boot();
     await importDemo();
-    fireEvent.click(await screen.findByRole('button', { name: /Plan/ }));
+    await openMenu();
+    fireEvent.click(screen.getByRole('button', { name: /Plan/ }));
     await screen.findByText('Live preview');
     fireEvent.click(screen.getByRole('button', { name: 'Mark done' }));
 
@@ -475,6 +484,74 @@ describe('revision screen', () => {
     expect(useAppStore.getState().revision[id].history).toEqual([
       { date: expect.any(String), result: 'done' },
     ]);
+  });
+});
+
+describe('side menu and data screen', () => {
+  it('hamburger opens the left menu with Plan and Data; the bottom row is Today, Backlog, Revision, Timeline', async () => {
+    await boot();
+    await importDemo();
+    await screen.findByText(/Today we.re studying/);
+
+    const menu = () => document.querySelector('.side-menu') as HTMLElement;
+    expect(menu().className).not.toContain('open');
+    fireEvent.click(screen.getByRole('button', { name: 'Open menu' }));
+    await waitFor(() => expect(menu().className).toContain('open'));
+    expect(screen.getByRole('button', { name: /Plan/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Data/ })).toBeTruthy();
+
+    // The bottom row has exactly the four tabs, in order.
+    const bottom = [...document.querySelectorAll('.bottom-nav button')].map(
+      (b) => b.textContent,
+    );
+    expect(bottom).toHaveLength(4);
+    expect(bottom[0]).toContain('Today');
+    expect(bottom[1]).toContain('Backlog');
+    expect(bottom[2]).toContain('Revision');
+    expect(bottom[3]).toContain('Timeline');
+
+    // Picking Data navigates and closes the menu.
+    fireEvent.click(screen.getByRole('button', { name: /Data/ }));
+    expect(await screen.findByText('Backup')).toBeTruthy();
+    await waitFor(() => expect(menu().className).not.toContain('open'));
+  });
+
+  it('exports a backup file from the Data screen', async () => {
+    await boot();
+    await importDemo();
+    await openMenu();
+    fireEvent.click(screen.getByRole('button', { name: /Data/ }));
+    await screen.findByText('Backup');
+
+    // Web fallback: capture the Blob handed to URL.createObjectURL (absent
+    // in jsdom, so stub it) and the anchor click that triggers the download.
+    let captured: Blob | null = null;
+    const origCreate = URL.createObjectURL;
+    const origRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = (b: Blob | MediaSource) => {
+      captured = b as Blob;
+      return 'blob:test';
+    };
+    URL.revokeObjectURL = () => {};
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    fireEvent.click(screen.getByRole('button', { name: 'Export data (JSON)' }));
+    await waitFor(() => expect(captured).toBeTruthy());
+
+    const text = await new Promise<string>((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result));
+      r.onerror = () => rej(r.error);
+      r.readAsText(captured as Blob);
+    });
+    const payload = JSON.parse(text);
+    expect(payload.appVersion).toBeTruthy();
+    expect(payload.curriculum).toHaveLength(8);
+    expect(payload.planConfig.dailyHours).toBe(3);
+
+    URL.createObjectURL = origCreate;
+    URL.revokeObjectURL = origRevoke;
+    clickSpy.mockRestore();
   });
 });
 
@@ -554,7 +631,8 @@ describe('plan lock', () => {
   it('locks the plan after setting a password, and unlocks with it', async () => {
     await boot();
     await importDemo();
-    fireEvent.click(await screen.findByRole('button', { name: /Plan/ }));
+    await openMenu();
+    fireEvent.click(screen.getByRole('button', { name: /Plan/ }));
     await screen.findByText('Live preview');
 
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'nurse123' } });
@@ -590,9 +668,8 @@ describe('backlog tab', () => {
     await waitFor(() =>
       expect(state().schedule.some((d) => d.type === 'study' && d.date < todayISO())).toBe(true),
     );
-    fireEvent.click(await screen.findByRole('button', { name: /Revise/ }));
-    await screen.findByText('Due for revision');
-    fireEvent.click(screen.getByRole('button', { name: 'Backlog' }));
+    const nav = document.querySelector('.bottom-nav') as HTMLElement;
+    fireEvent.click(within(nav).getByRole('button', { name: /Backlog/ }));
     await screen.findByText('Missed lectures');
   }
 

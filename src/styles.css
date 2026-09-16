@@ -188,6 +188,84 @@ h4 {
   padding: 14px 14px calc(var(--nav-h) + 26px);
 }
 
+/* ------------------------- side menu (hamburger) ------------------------- */
+
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(5, 8, 14, 0.45);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+
+.drawer-overlay.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.side-menu {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 41;
+  width: 236px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: calc(var(--header-h) + 14px) 12px 16px;
+  background: var(--bg-elev);
+  border-right: 1px solid var(--border);
+  box-shadow: 18px 0 40px rgba(0, 0, 0, 0.25);
+  transform: translateX(-102%);
+  transition: transform 0.18s ease;
+}
+
+.side-menu.open {
+  transform: translateX(0);
+}
+
+.side-menu-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  padding: 0 10px 8px;
+}
+
+.side-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.side-menu button:hover {
+  background: var(--bg-elev-2);
+}
+
+.side-menu button.active {
+  background: var(--bg-elev-2);
+  color: var(--accent-text);
+}
+
+.side-menu .nav-icon {
+  font-size: 16px;
+  width: 20px;
+  text-align: center;
+}
+
 .bottom-nav {
   position: fixed;
   left: 0;

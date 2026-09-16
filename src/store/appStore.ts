@@ -15,6 +15,9 @@ import type {
   ScheduleDay,
   Subject,
 } from '../types';
+import { Capacitor } from '@capacitor/core';
+import { Directory, Filesystem } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 import { todayISO } from '../lib/dates';
 import { buildLectureIndex, parseCurriculumDetailed, subjectStats, type LectureRef } from '../lib/parseCurriculum';
 import {
@@ -45,7 +48,7 @@ export type MarkFlags = {
   questionsDone?: boolean;
 };
 
-export type Route = 'import' | 'setup' | 'today' | 'timeline' | 'subjects' | 'revision' | 'data';
+export type Route = 'import' | 'setup' | 'today' | 'timeline' | 'subjects' | 'revision' | 'backlog' | 'data';
 
 type Derived = {
   lectureIndex: Map<string, LectureRef>;
@@ -664,7 +667,30 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
       await flushWrites();
       const { curriculum, planConfig, progress, revision } = get();
       const payload = buildExportPayload(curriculum, planConfig, progress, revision);
-      downloadJSON(exportFileName(), payload);
+      const filename = exportFileName();
+      // The Android WebView does not honour the programmatic anchor download
+      // (nothing happens - the old "export does nothing" bug). On native,
+      // write the file to Documents and open the system share sheet instead.
+      if (Capacitor.isNativePlatform()) {
+        try {
+          const { uri } = await Filesystem.writeFile({
+            path: filename,
+            directory: Directory.Documents,
+            recursive: true,
+            data: JSON.stringify(payload, null, 2),
+          });
+          try {
+            await Share.share({ title: 'NORCET Tracker backup', files: [uri] });
+          } catch {
+            // She dismissed the share sheet - the file is still in Documents.
+          }
+          get().notify(`Backup saved to Documents as ${filename}.`);
+          return;
+        } catch {
+          // Plugin unavailable - fall through to the web download below.
+        }
+      }
+      downloadJSON(filename, payload);
     },
 
     applyBackup({ curriculum, planConfig, progress, revision }) {

@@ -398,7 +398,7 @@ export function TodayScreen() {
               <button className="btn sm" onClick={catchUp}>
                 Catch me up
               </button>
-              <button className="btn sm ghost" onClick={() => setRoute('revision')}>
+              <button className="btn sm ghost" onClick={() => setRoute('backlog')}>
                 Backlog →
               </button>
             </div>

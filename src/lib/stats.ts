@@ -7,6 +7,40 @@ import type { PlanConfig, ProgressStore, ScheduleDay, Subject } from '../types';
 import { diffDays, maxISO, todayISO } from './dates';
 import type { LectureRef } from './parseCurriculum';
 
+export type MissedLecture = { id: string; date: string };
+
+/**
+ * Lectures scheduled on past study days that are still unwatched, plus any
+ * unwatched in-plan lecture the schedule no longer covers at all (the tail
+ * that drops off when a day's hours are reduced on a plan with no off day -
+ * `date` is empty for those). Shared by the Backlog tab and its nav badge.
+ */
+export function missedLectures(
+  schedule: ScheduleDay[],
+  lectureIndex: Map<string, LectureRef>,
+  subjectOrder: string[],
+  progress: ProgressStore,
+  today: string,
+): MissedLecture[] {
+  const out: MissedLecture[] = [];
+  const scheduled = new Set<string>();
+  for (const d of schedule) {
+    if (d.type !== 'study') continue;
+    for (const id of d.lectureIds) {
+      scheduled.add(id);
+      if (d.date < today) out.push({ id, date: d.date });
+    }
+  }
+  const included = new Set(subjectOrder);
+  for (const [id, ref] of lectureIndex) {
+    if (progress[id]?.lectureWatched) continue;
+    if (!included.has(ref.subject.id)) continue;
+    if (scheduled.has(id)) continue;
+    out.push({ id, date: '' });
+  }
+  return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+
 export type PlanStats = {
   /** Last day that has lectures assigned. */
   finishDate: string | null;
