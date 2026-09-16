@@ -1245,7 +1245,12 @@ textarea {
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   font-size: 13px;
-  /* A day finished is a small win - pop it in gently the moment it appears. */
+}
+
+/* A day finished is a small win - pop it in gently the moment it appears,
+   but ONLY on the in-session transition (.ok-box.pop). A reopen renders the
+   box statically, so it never re-celebrates. */
+.ok-box.pop {
   animation: ok-pop 250ms ease-out;
 }
 

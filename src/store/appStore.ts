@@ -167,6 +167,25 @@ function derive(
   };
 }
 
+/**
+ * Record each study day's FIRST lecture assignment as its baseline (see
+ * PlanConfig.dayBasis). First assignment wins per date; nothing is ever
+ * pruned, because the Timeline's day detail wants yesterday's baseline too.
+ * Returns the same reference when nothing changed, so callers can skip an
+ * extra plan version bump.
+ */
+function recordDayBasis(plan: PlanConfig, schedule: ScheduleDay[]): PlanConfig {
+  let basis = plan.dayBasis ?? {};
+  let changed = false;
+  for (const day of schedule) {
+    if (day.type !== 'study' || day.lectureIds.length === 0) continue;
+    if (basis[day.date]) continue; // the first assignment wins
+    basis = { ...basis, [day.date]: [...day.lectureIds] };
+    changed = true;
+  }
+  return changed ? { ...plan, dayBasis: basis } : plan;
+}
+
 /** Write one progress entry, maintaining `completedDate`. */
 function writeProgress(
   progress: ProgressStore,
@@ -240,17 +259,34 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
       progress: patch.progress ?? state.progress,
       revision: patch.revision ?? state.revision,
     };
+    const needsDerive = Boolean(changed.curriculum || changed.plan || changed.progress);
+    let planConfig = next.planConfig;
+    const derived = needsDerive ? derive(next.curriculum, next.planConfig, next.progress) : null;
+    if (derived) {
+      // The per-day baseline (planConfig.dayBasis) is recorded as a side
+      // effect of a re-derivation. For a PROGRESS change we must use the
+      // pre-tick schedule: the freshly derived one has already compacted (the
+      // watched lecture's day was refilled), which would record the wrong
+      // baseline. Plan/curriculum changes get the fresh schedule.
+      const basisSchedule = changed.progress ? state.schedule : derived.schedule;
+      const withBasis = recordDayBasis(planConfig, basisSchedule);
+      if (withBasis !== planConfig) {
+        planConfig = withBasis;
+        next.planConfig = withBasis;
+      }
+    }
     const versions: Versions = {
       curriculum: state.versions.curriculum + (changed.curriculum ? 1 : 0),
-      plan: state.versions.plan + (changed.plan ? 1 : 0),
+      plan:
+        state.versions.plan + (changed.plan || planConfig !== state.planConfig ? 1 : 0),
       progress: state.versions.progress + (changed.progress ? 1 : 0),
       revision: state.versions.revision + (changed.revision ? 1 : 0),
     };
-    const needsDerive = Boolean(changed.curriculum || changed.plan || changed.progress);
     set({
       ...patch,
+      ...(planConfig !== state.planConfig ? { planConfig } : null),
       versions,
-      ...(needsDerive ? derive(next.curriculum, next.planConfig, next.progress) : null),
+      ...(derived ? derived : null),
     });
     persist();
   };
@@ -378,11 +414,20 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
         }
       }
 
+      // Day baselines referring to lectures missing from the fresh
+      // curriculum are stale (a DIFFERENT curriculum was imported); they are
+      // re-recorded on the next schedule generation.
+      const dayBasis = Object.fromEntries(
+        Object.entries(state.planConfig.dayBasis ?? {}).filter(([, ids]) =>
+          ids.every((id) => freshIds.has(id)),
+        ),
+      );
       const planConfig: PlanConfig = {
         ...state.planConfig,
         subjectOrder,
         bufferDaysBySubject,
         offDayLectures: offDayLectures ?? {},
+        dayBasis,
       };
       commit(
         { curriculum: subjects, planConfig, progress, revision, route: 'today' },
@@ -422,6 +467,10 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
       }
       if (Array.isArray(next.studyDays) && next.studyDays.length === 0) {
         next.studyDays = current.studyDays; // a plan with zero study days is a dead plan
+      }
+      if (patch.startDate !== undefined) {
+        // A moved start re-plans the whole thing: old day baselines are stale.
+        next.dayBasis = {};
       }
       // Manually moving the start date invalidates a previous "shift the
       // schedule" anchor (its overflow day no longer means anything), unless

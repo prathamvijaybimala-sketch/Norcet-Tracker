@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../store/appStore';
 import { TopicSection } from '../components/TopicSection';
 import { Modal, EmptyState, ProgressBar } from '../components/ui';
-import { dayCompletion, dayStatus } from '../lib/stats';
+import { dayStatus } from '../lib/stats';
 import { subjectColor } from '../lib/colors';
 import { buildMonthGrid } from '../lib/monthGrid';
 import { WEEKDAY_SHORT, formatDate, monthKey, parseISODate, todayISO } from '../lib/dates';
@@ -12,7 +12,7 @@ export function TimelineScreen() {
   const schedule = useAppStore((s) => s.schedule);
   const scheduleByDate = useAppStore((s) => s.scheduleByDate);
   const progress = useAppStore((s) => s.progress);
-  const lectureIndex = useAppStore((s) => s.lectureIndex);
+  const planConfig = useAppStore((s) => s.planConfig);
   const theme = useAppStore((s) => s.theme);
   const [selected, setSelected] = useState<string | null>(null);
   const today = todayISO();
@@ -30,10 +30,13 @@ export function TimelineScreen() {
   const months = useMemo(() => buildMonthGrid(schedule), [schedule]);
 
   const selectedDay = selected ? scheduleByDate.get(selected) : undefined;
-  const completion = useMemo(
-    () => dayCompletion(selectedDay, progress, lectureIndex),
-    [selectedDay, progress, lectureIndex],
-  );
+  // Baseline (planConfig.dayBasis): the lectures the plan originally assigned
+  // to that day. The live list holds only UNwatched lectures (compacting
+  // queue), so counting watched against it would always read 0.
+  const basisIds = selectedDay
+    ? planConfig.dayBasis?.[selectedDay.date] ?? selectedDay.lectureIds
+    : [];
+  const basisWatched = basisIds.filter((id) => progress[id]?.lectureWatched).length;
 
   if (schedule.length === 0) {
     return (
@@ -146,15 +149,15 @@ export function TimelineScreen() {
                   : 'Off day'}
             </span>
             <span>
-              watched {completion.watched}/{completion.total}
+              watched {basisWatched}/{basisIds.length}
             </span>
           </div>
-          {completion.total ? (
+          {basisIds.length ? (
             <div style={{ marginBottom: 10 }}>
               <ProgressBar
-                value={completion.watched}
-                max={completion.total}
-                tone={completion.allDone ? 'ok' : 'accent'}
+                value={basisWatched}
+                max={basisIds.length}
+                tone={basisWatched === basisIds.length ? 'ok' : 'accent'}
               />
             </div>
           ) : null}

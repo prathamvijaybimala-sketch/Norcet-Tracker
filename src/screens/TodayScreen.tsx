@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { useAppStore } from '../store/appStore';
 import { TopicSection } from '../components/TopicSection';
 import { Modal, ProgressBar, EmptyState } from '../components/ui';
@@ -288,6 +288,29 @@ export function TodayScreen() {
     () => dayCompletion(day, progress, lectureIndex),
     [day, progress, lectureIndex],
   );
+
+  // What the plan ORIGINALLY assigned to today (PlanConfig.dayBasis). The
+  // live list is a compacting queue - the moment a lecture is watched, the
+  // next unwatched one replaces it - so "all of today is done" can never be
+  // measured on the live list; the baseline is the measure. Refilled lectures
+  // are "tomorrow's list, already generated". Falls back to the live list on
+  // the single frame before a basis exists.
+  const speed = planConfig.playbackSpeed > 0 ? planConfig.playbackSpeed : 1;
+  const basisIds = planConfig.dayBasis?.[today] ?? day?.lectureIds ?? [];
+  const basisWatched = basisIds.filter((id) => progress[id]?.lectureWatched);
+  const basisSec = basisIds.reduce(
+    (n, id) => n + (lectureIndex.get(id)?.lecture.durationSec ?? 0) / speed,
+    0,
+  );
+  const basisDoneSec = basisWatched.reduce(
+    (n, id) => n + (lectureIndex.get(id)?.lecture.durationSec ?? 0) / speed,
+    0,
+  );
+  const dayDone = basisIds.length > 0 && basisWatched.length === basisIds.length;
+
+  // The pop should fire once, at the moment the day becomes done in THIS
+  // visit. A reopen starts already done -> the box renders statically.
+  const wasDoneAtMount = useRef(dayDone);
   const revisionDue = useMemo(() => dueRevisions(revision, today).length, [revision, today]);
 
   // Lectures ticked today: they drop out of the schedule, so list them here
@@ -344,14 +367,17 @@ export function TodayScreen() {
             </div>
             <div style={{ marginBottom: 12 }}>
               <ProgressBar
-                value={completion.doneSec}
-                max={completion.plannedSec}
-                tone={completion.allDone ? 'ok' : 'accent'}
+                value={basisDoneSec}
+                max={basisSec || completion.plannedSec}
+                tone={dayDone ? 'ok' : 'accent'}
               />
             </div>
             <TopicSection lectureIds={day.lectureIds} showContext={false} contextDate={today} />
-            {completion.allDone ? (
-              <div className="ok-box warm-copy" style={{ marginTop: 14 }}>
+            {dayDone ? (
+              <div
+                className={`ok-box warm-copy${wasDoneAtMount.current ? '' : ' pop'}`}
+                style={{ marginTop: 14 }}
+              >
                 Everything planned for today is watched. Nice. Tomorrow's list is already
                 generated from what is left.
               </div>

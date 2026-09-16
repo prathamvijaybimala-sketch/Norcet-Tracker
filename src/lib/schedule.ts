@@ -207,6 +207,13 @@ export function generateSchedule(
     );
     const existing = assigned.get(date);
     if (existing) {
+      if (existing.type !== 'study') {
+        // An off day can coincide with a rest (buffer) day. The parked
+        // lectures take precedence over the rest, so promote the day to a
+        // study day - the Today screen renders study cards, and a rest day
+        // carrying lectures would leave them unreachable.
+        existing.type = 'study';
+      }
       existing.lectureIds.push(...ids);
       existing.plannedSec += plannedSec;
     } else {

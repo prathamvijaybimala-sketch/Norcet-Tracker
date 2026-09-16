@@ -80,6 +80,36 @@ describe('backlog: move to off day', () => {
     expect(schedule.reduce((n, d) => n + d.lectureIds.length, 0)).toBe(4);
   });
 
+  it('parking onto a rest (buffer) day promotes it to a study day', () => {
+    // A: 3h of lectures = one day (Tue 15 Sep). A 5-day rest then spans
+    // Wed-Sun, so Sunday 20 Sep is a BUFFER day. Parking B's only lecture
+    // there must not leave it hidden behind a "rest day".
+    const subjects = makeSubjects([hours('A', 1, 1, 1), hours('B', 1)]);
+    const aId = subjects[0].id;
+    const bId = subjects[1].id;
+    const bLecture = subjects[1].topics[0].lectures[0].id;
+    const config: PlanConfig = {
+      ...makePlan({
+        subjectOrder: [aId, bId],
+        studyDays: [1, 2, 3, 4, 5, 6],
+        dailyHours: 3,
+        playbackSpeed: 1,
+        bufferDaysBySubject: { [aId]: 5 },
+      }),
+      offDayLectures: { [bLecture]: '2026-09-20' },
+    };
+    // Sanity: without the parked lecture this day is a rest day.
+    const without = generateSchedule(subjects, { ...config, offDayLectures: {} }, {});
+    expect(without.find((d) => d.date === '2026-09-20')?.type).toBe('buffer');
+    // With it: a real study day carrying the lecture (visible + reachable).
+    const schedule = generateSchedule(subjects, config, {});
+    const sunday = schedule.find((d) => d.date === '2026-09-20');
+    expect(sunday?.type).toBe('study');
+    expect(sunday?.lectureIds).toEqual([bLecture]);
+    // Nothing lost: A's three + the parked one.
+    expect(schedule.reduce((n, d) => n + d.lectureIds.length, 0)).toBe(4);
+  });
+
   it('a watched off-day lecture drops its off-day slot', () => {
     const subjects = makeSubjects([hours('A', 1, 1, 1)]);
     const id = subjects[0].topics[0].lectures[0].id;

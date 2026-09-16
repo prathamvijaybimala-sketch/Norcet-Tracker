@@ -107,6 +107,23 @@ export type PlanConfig = {
    * user shifts / catches up again.
    */
   backlogAnchor: string | null;
+
+  /**
+   * Per-day lecture baseline: date -> the lecture ids the plan FIRST assigned
+   * to that day (recorded at schedule generation, never overwritten for an
+   * existing date).
+   *
+   * Why: the schedule is a compacting queue - the moment a lecture is watched
+   * it leaves its day and the next unwatched lecture takes its place, so a
+   * day's live list can never be "fully done" by construction. The baseline
+   * remembers what the day was originally planned to contain, which is what
+   * "Everything planned for today is watched" and the day's progress bar are
+   * measured against. Refilled lectures are "tomorrow's list, already
+   * generated". Past dates are kept (the Timeline's day detail wants
+   * yesterday's baseline too); a new plan start or a re-import of a different
+   * curriculum clears stale entries.
+   */
+  dayBasis: Record<string, string[]>;
 };
 
 /** ---------- 2.3 Progress (the source of truth) ---------- */
