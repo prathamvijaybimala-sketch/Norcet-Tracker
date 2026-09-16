@@ -120,6 +120,13 @@ type Actions = {
   returnLectureFromOffDay: (lectureId: string) => void;
   /** Backlog: re-spread the plan from today, opening the next off day for overflow. */
   shiftScheduleFromBacklog: () => void;
+  /**
+   * Today screen's "Today: Xh" slider: set (or, with `null`, clear) the
+   * per-day hours override for `date`. Past-day overrides are pruned - their
+   * week has already passed. This is the SOFT adjustment; "Skip day" goes
+   * through `addLeaveDates` instead (a real leave day, full plan shift).
+   */
+  setDayHours: (date: string, hours: number | null) => void;
   /** Topic-level "Questions" checkbox: tick / untick every lecture of a topic. */
   setTopicQuestions: (topicId: string, value: boolean) => void;
 
@@ -484,10 +491,25 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
         backlogAnchor: anchor,
         // Past leave days can no longer shift anything.
         leaveDates: planConfig.leaveDates.filter((d) => d >= anchor),
+        // ...and neither can per-day hours overrides.
+        dayHours: Object.fromEntries(
+          Object.entries(planConfig.dayHours ?? {}).filter(([d]) => d >= anchor),
+        ),
       });
       get().notify(
         `Schedule shifted from ${anchor}. The next off day is open for the extra lecture.`,
       );
+    },
+
+    setDayHours(date, hours) {
+      const today = todayISO();
+      const next: Record<string, number> = {};
+      for (const [d, h] of Object.entries(get().planConfig.dayHours ?? {})) {
+        if (d >= today) next[d] = h; // drop stale past-day overrides
+      }
+      if (hours === null) delete next[date];
+      else next[date] = Math.max(1, Math.min(16, Math.round(hours * 2) / 2));
+      get().updatePlan({ dayHours: next });
     },
 
     setTopicQuestions(topicId, value) {

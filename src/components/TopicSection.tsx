@@ -12,15 +12,19 @@ type Group = {
 /**
  * Renders a list of lectures grouped by topic (subtopic).
  *
- * The "Questions" checkbox lives ONCE per topic header instead of on every
- * lecture row: MCQ practice is done for the whole topic, so the checkbox
- * ticks every lecture of that topic at once and shows ticked only when all of
- * them are done.
+ * Layout (quiet, top to bottom):
+ *   topic name
+ *     lecture rows (accordion - one focused at a time, one box each)
+ *     Questions checkbox (ONE per topic, at the end)
+ *
+ * The "Questions" checkbox ticks every lecture of the topic at once and shows
+ * ticked only when all of them are done. Progress is conveyed by the
+ * checkboxes themselves, so there are no numeric "0/3" counters.
  *
  * With `accordion` (default), at most one lecture row is expanded at a time:
  * the first not-fully-done one opens by itself, tapping a collapsed row
  * expands it for viewing, and finishing the open row advances focus to the
- * next one. `accordion={false}` keeps the classic flat rows ("Done today").
+ * next one. `accordion={false}` keeps the flat rows ("Done today").
  * Accordion state is local UI state - never part of the Zustand store.
  */
 export function TopicSection({
@@ -32,7 +36,7 @@ export function TopicSection({
   lectureIds: string[];
   showContext?: boolean;
   showScheduledDate?: boolean;
-  /** False = classic flat rows instead of the accordion (used by "Done today"). */
+  /** False = flat rows instead of the accordion (used by "Done today"). */
   accordion?: boolean;
 }) {
   const lectureIndex = useAppStore((s) => s.lectureIndex);
@@ -84,18 +88,6 @@ export function TopicSection({
               <span className="topic-name truncate" title={g.topicName}>
                 {g.topicName}
               </span>
-              <span className="tiny faint mono">
-                {qDone}/{g.ids.length}
-              </span>
-              <label className={`check ${allQ ? 'on' : ''}`} title="Questions for the whole topic">
-                <input
-                  type="checkbox"
-                  checked={allQ}
-                  onChange={(e) => setTopicQuestions(g.topicId, e.target.checked)}
-                  aria-label={`Questions done for ${g.topicName}`}
-                />
-                <span className="check-label">Questions</span>
-              </label>
             </div>
             {g.ids.map((id) => (
               <LectureRow
@@ -107,6 +99,15 @@ export function TopicSection({
                 {...(accordion ? { expanded: acc.isExpanded(id), onToggle: () => acc.onToggle(id) } : {})}
               />
             ))}
+            <label className={`check topic-questions ${allQ ? 'on' : ''}`} title="Questions for the whole topic">
+              <input
+                type="checkbox"
+                checked={allQ}
+                onChange={(e) => setTopicQuestions(g.topicId, e.target.checked)}
+                aria-label={`Questions done for ${g.topicName}`}
+              />
+              <span className="check-label">Questions for this topic</span>
+            </label>
           </div>
         );
       })}

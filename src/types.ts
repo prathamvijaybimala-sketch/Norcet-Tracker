@@ -52,6 +52,23 @@ export type PlanConfig = {
   startDate: string;
 
   /**
+   * Per-day hours override from the Today screen's "Today: Xh" slider
+   * (section 7). ISO date -> hours.
+   *
+   * This is a SOFT, one-week adjustment layered on top of `dailyHours` -
+   * it never changes `dailyHours` itself. See `applyDayHourOverrides` in
+   * lib/schedule.ts for the exact (week-scoped) effect:
+   *  - below plan: the shortfall rides onto that week's off day (the same
+   *    overflow day the Backlog feature uses);
+   *  - above plan: the surplus is pulled off that week's last study day
+   *    (capped at that day's load, never negative, never rippling on).
+   *
+   * "Skip day" is deliberately NOT stored here - skipping a day is a leave
+   * day (see `leaveDates`), which shifts the whole plan.
+   */
+  dayHours: Record<string, number>;
+
+  /**
    * How buffer days consume calendar time (see section 5.4 of the spec, which
    * explicitly leaves this choice open and asks for a documented default).
    *

@@ -26,7 +26,7 @@ export type ScheduleInputs = {
   progress: ProgressStore;
 };
 
-type Assigned = {
+export type Assigned = {
   type: 'study' | 'buffer';
   subjectId: string;
   subjectName: string;
@@ -221,6 +221,27 @@ export function generateSchedule(
     }
   }
 
+  // Per-day hours override (the Today screen's "Today: Xh" slider): a soft,
+  // week-scoped rebalance layered on top of the packed plan. It runs AFTER the
+  // backlog off-day placement so a reduced day's shortfall can ride onto an
+  // off day that already carries moved lectures.
+  if (planConfig.dayHours && Object.keys(planConfig.dayHours).length > 0) {
+    const lectureEff = new Map<string, number>();
+    for (const [id, { lecture }] of lectureSubject) {
+      lectureEff.set(id, Math.ceil(lecture.durationSec / speed));
+    }
+    applyDayHourOverrides(
+      assigned,
+      planConfig,
+      lectureEff,
+      (id) => {
+        const ref = lectureSubject.get(id);
+        return ref ? { subjectId: ref.subject.id, subjectName: ref.subject.name } : null;
+      },
+      mark,
+    );
+  }
+
   if (assigned.size === 0) return [];
 
   // Emit every calendar day from start to the last assigned day, filling the
@@ -259,6 +280,156 @@ export function generateSchedule(
   return days;
 }
 
+/**
+ * Per-day hours override (the Today screen's "Today: Xh" slider, section 7).
+ *
+ * One day's override is a SOFT, week-scoped adjustment layered on top of the
+ * packed plan. It never changes `planConfig.dailyHours` and never shifts the
+ * plan beyond its absorbing day, so next week always resumes normal pacing:
+ *
+ *  - DAY REDUCED (override < plan hours): the lectures that no longer fit on
+ *    the day (its tail, whole lectures only - we never split a lecture) move
+ *    onto that week's off day: the first off day on/after the reduced day,
+ *    i.e. the same overflow day the Backlog feature uses. Every other day
+ *    keeps exactly the lectures it already had - the rest of the plan stays
+ *    put, the same way "To (off day)" does.
+ *
+ *  - DAY INCREASED (override > plan hours): the matching whole-lecture tail
+ *    is pulled OFF the week's last study day (e.g. Saturday) and appended to
+ *    the increased day. She is getting ahead, so the week's final day has
+ *    less to do. The pull is capped at the last day's load (never negative),
+ *    and if the increased day IS the last study day there is nothing left in
+ *    the week to absorb the surplus, so the override is a no-op.
+ *
+ *  - No off day exists in the plan (studying 7 days a week): a reduction has
+ *    nowhere to ride, so it is a no-op.
+ *
+ * Days that no longer exist in the assignment (fully watched, a leave day, a
+ * buffer day) are skipped. Multiple overrides are applied in date order
+ * against the evolving assignment, so two overrides in the same week compose
+ * without double-moving a lecture.
+ *
+ * Mutates `assigned` (and calls `onMark` for a newly opened off day).
+ */
+export function applyDayHourOverrides(
+  assigned: Map<string, Assigned>,
+  planConfig: PlanConfig,
+  lectureEff: Map<string, number>,
+  subjectOf: (lectureId: string) => { subjectId: string; subjectName: string } | null,
+  onMark: (date: string, day: Assigned) => void,
+): void {
+  const effOf = (id: string) => lectureEff.get(id) ?? 0;
+  const loadOf = (ids: string[]) => ids.reduce((n, id) => n + effOf(id), 0);
+
+  const entries = Object.entries(planConfig.dayHours).sort(([a], [b]) => (a < b ? -1 : 1));
+  for (const [date, targetHours] of entries) {
+    const day = assigned.get(date);
+    if (!day || day.type !== 'study' || day.lectureIds.length === 0) continue;
+
+    const targetSec = Math.round(targetHours * 3600);
+    const loadSec = day.plannedSec;
+
+    if (targetSec < loadSec) {
+      // -------- reduced: the day's tail rides onto the week's off day --------
+      const offDay = nextOffDayOnOrAfter(date, planConfig);
+      if (!offDay) continue; // 7-day plan: no off day, nothing to absorb it
+      const { keep, tail } = splitAtCapacity(day.lectureIds, targetSec, effOf);
+      if (tail.length === 0) continue;
+      day.lectureIds = keep;
+      day.plannedSec = loadOf(keep);
+
+      // Same merge behaviour as the backlog off-day placement: append when
+      // the day already exists (a shift-opened overflow day, a buffer day),
+      // otherwise open it as a study day.
+      const existing = assigned.get(offDay);
+      if (existing) {
+        existing.lectureIds.push(...tail);
+        existing.plannedSec += loadOf(tail);
+      } else {
+        const first = tail.map(subjectOf).find(Boolean);
+        if (!first) continue;
+        onMark(offDay, {
+          type: 'study',
+          subjectId: first.subjectId,
+          subjectName: first.subjectName,
+          lectureIds: [...tail],
+          plannedSec: loadOf(tail),
+        });
+      }
+    } else if (targetSec > loadSec) {
+      // -------- increased: pull the week's last study day's tail here --------
+      const weekStart = startOfWeek(date);
+      let lastAfter: string | null = null;
+      for (let i = 0; i < 7; i++) {
+        const d = addDays(weekStart, i);
+        if (d <= date) continue; // only days AFTER the increased day can give up load
+        const hit = assigned.get(d);
+        if (hit && hit.type === 'study' && hit.lectureIds.length > 0) lastAfter = d;
+      }
+      if (!lastAfter) continue; // the increased day is the week's last: no-op
+      const lastDay = assigned.get(lastAfter)!;
+      const pullSec = Math.min(targetSec - loadSec, lastDay.plannedSec);
+      const { keep, tail } = splitTail(lastDay.lectureIds, pullSec, effOf);
+      if (tail.length === 0) continue;
+      lastDay.lectureIds = keep;
+      lastDay.plannedSec = loadOf(keep);
+      day.lectureIds = [...day.lectureIds, ...tail]; // chronological order kept
+      day.plannedSec = loadOf(day.lectureIds);
+    }
+  }
+}
+
+/**
+ * Split `ids` (chronological) into the longest prefix that fits `targetSec`
+ * and the remaining tail. Mirrors the packer's convention: the first lecture
+ * always stays, even if it overflows the target.
+ */
+function splitAtCapacity(
+  ids: string[],
+  targetSec: number,
+  effOf: (id: string) => number,
+): { keep: string[]; tail: string[] } {
+  const keep: string[] = [];
+  const tail: string[] = [];
+  let used = 0;
+  for (const id of ids) {
+    if (keep.length > 0 && used + effOf(id) > targetSec) tail.push(id);
+    else {
+      keep.push(id);
+      used += effOf(id);
+    }
+  }
+  return { keep, tail };
+}
+
+/**
+ * Cut whole lectures from the END of `ids` until at least `cutSec` of load is
+ * removed; returns the remainder (keep) and the removed tail in chronological
+ * order. The last lecture is always taken whole once the cut starts.
+ */
+function splitTail(
+  ids: string[],
+  cutSec: number,
+  effOf: (id: string) => number,
+): { keep: string[]; tail: string[] } {
+  const keep = [...ids];
+  const tail: string[] = [];
+  let remaining = cutSec;
+  while (remaining > 0 && keep.length > 0) {
+    const id = keep.pop() as string;
+    tail.push(id);
+    remaining -= effOf(id);
+  }
+  tail.reverse();
+  return { keep, tail };
+}
+
+/** Monday of the calendar week (Mon..Sun) containing `iso`. */
+function startOfWeek(iso: string): string {
+  const dow = weekdayOf(iso); // 0 = Sunday .. 6 = Saturday
+  return addDays(iso, dow === 0 ? -6 : 1 - dow);
+}
+
 /** date -> ScheduleDay, for O(1) lookups in the UI. */
 export function indexScheduleByDate(schedule: ScheduleDay[]): Map<string, ScheduleDay> {
   const map = new Map<string, ScheduleDay>();
@@ -292,6 +463,10 @@ export function catchUpPlan(planConfig: PlanConfig, today: string): PlanConfig {
     startDate: today,
     // Leave days in the past can no longer shift anything; keep the list tidy.
     leaveDates: planConfig.leaveDates.filter((d) => d >= today),
+    // Same for per-day hours overrides - their week has passed.
+    dayHours: Object.fromEntries(
+      Object.entries(planConfig.dayHours ?? {}).filter(([d]) => d >= today),
+    ),
     // Catching up IS a shift: the next off day (usually Sunday) may absorb
     // the week's overflow, matching what the Backlog tab promises.
     backlogAnchor: today,

@@ -1,29 +1,30 @@
 import { memo, useCallback } from 'react';
-import { useAppStore, type ProgressFlag } from '../store/appStore';
+import { useAppStore } from '../store/appStore';
 import { formatClock, formatDuration } from '../lib/duration';
 import { subjectColor } from '../lib/colors';
 
-const FLAGS: { key: ProgressFlag; label: string }[] = [
-  { key: 'lectureWatched', label: 'Lecture' },
-  { key: 'notesDone', label: 'Notes' },
-];
-
 /**
- * One lecture with its two INDEPENDENT checkboxes: "Lecture" (watched) and
- * "Notes". MCQ practice is tracked per TOPIC, not per lecture - see
+ * One lecture with ONE checkbox: ticking it sets BOTH `lectureWatched` and
+ * `notesDone` in the same update, unticking clears both. The two fields stay
+ * separate in the data model (the revision-queue gate still reads them
+ * individually) - this is a UI simplification, not a schema change.
+ *
+ * MCQ practice is still tracked per TOPIC, not per lecture - see
  * `TopicSection`, which renders the single "Questions" checkbox per topic.
  *
- * Subscribes only to its own progress record, so ticking a box re-renders this
- * row and the schedule - never the whole list (and never with a page reload or
- * a scroll jump).
+ * Subscribes only to its own progress record, so ticking the box re-renders
+ * this row and the schedule - never the whole list (and never with a page
+ * reload or a scroll jump).
  *
- * Two shapes:
- *  - CLASSIC (no `onToggle`): the old flat row with name, context and the two
- *    checkboxes. Used by flat lists ("Done today").
- *  - ACCORDION (`onToggle` given): a compact one-line button when collapsed
- *    (tick + name + duration, no checkboxes), and a larger name + the two
- *    checkboxes when expanded. The parent owns "which row is open" - see
- *    `useAccordion`.
+ * Three shapes:
+ *  - CLASSIC (no `onToggle`): flat row with name, context and the checkbox.
+ *    Used by flat lists ("Done today").
+ *  - ACCORDION COLLAPSED: a compact one-line button (tick-if-done + name +
+ *    duration, no checkbox).
+ *  - ACCORDION EXPANDED (the focused row): one large finger-friendly
+ *    checkbox + a larger name + duration. The parent owns "which row is
+ *    open" - see `useAccordion`. Hierarchy comes from type size/weight, not
+ *    from a boxed background.
  */
 export const LectureRow = memo(function LectureRow({
   lectureId,
@@ -36,9 +37,9 @@ export const LectureRow = memo(function LectureRow({
   lectureId: string;
   showContext?: boolean;
   showScheduledDate?: boolean;
-  /** Accordion mode only: this row is the expanded one. */
+  /** Accordion mode only: this row is the expanded (focused) one. */
   expanded?: boolean;
-  /** Present = accordion row (collapsed button / expanded card). Absent = classic flat row. */
+  /** Present = accordion row (collapsed button / expanded row). Absent = classic flat row. */
   onToggle?: () => void;
   /** Hide the per-row subject when the whole list belongs to one subject. */
   hideSubject?: boolean;
@@ -47,16 +48,16 @@ export const LectureRow = memo(function LectureRow({
   const progress = useAppStore((s) => s.progress[lectureId]);
   const speed = useAppStore((s) => s.planConfig.playbackSpeed);
   const scheduledDate = useAppStore((s) => s.scheduleByLecture.get(lectureId));
-  const setFlag = useAppStore((s) => s.setFlag);
+  const setFlags = useAppStore((s) => s.setFlags);
   const theme = useAppStore((s) => s.theme);
 
-  const onToggleFlag = useCallback(
-    (flag: ProgressFlag) => (e: React.ChangeEvent<HTMLInputElement>) => {
-      // No preventDefault, no navigation, no remount: the DOM node stays put so
-      // scroll position and focus are preserved.
-      setFlag(lectureId, flag, e.target.checked);
+  /** One box = watched + notes, always set together. */
+  const onToggleBoth = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const value = e.target.checked;
+      setFlags(lectureId, { lectureWatched: value, notesDone: value });
     },
-    [setFlag, lectureId],
+    [setFlags, lectureId],
   );
 
   if (!ref) return null;
@@ -65,22 +66,43 @@ export const LectureRow = memo(function LectureRow({
   const color = subjectColor(ref.subject.id, theme);
   const done = Boolean(progress?.lectureWatched);
   const fullyDone = done && Boolean(progress?.notesDone);
+  const checked = fullyDone;
 
-  const flags = (
-    <div className="lecture-flags">
-      {FLAGS.map(({ key, label }) => (
-        <label className={`check ${progress?.[key] ? 'on' : ''}`} key={key}>
-          <input type="checkbox" checked={Boolean(progress?.[key])} onChange={onToggleFlag(key)} />
-          <span className="check-label">{label}</span>
-        </label>
-      ))}
+  const speedBadge =
+    speed !== 1 ? (
+      <span className="badge accent">{formatDuration(effSec)} at {speed}×</span>
+    ) : null;
+  const dueBadge =
+    showScheduledDate && scheduledDate ? (
+      <span className="badge">due {scheduledDate.slice(5)}</span>
+    ) : null;
+
+  const context = showContext ? (
+    <div className="lecture-sub">
+      {!hideSubject ? (
+        <>
+          <span>{ref.subject.name}</span>
+          <span aria-hidden>·</span>
+        </>
+      ) : null}
+      <span className="truncate">{ref.topic.name}</span>
+      <span aria-hidden>·</span>
+      {speedBadge}
+      {dueBadge}
     </div>
+  ) : null;
+
+  const bigCheck = (
+    <label className="check check-big" title="Lecture + notes, in one box">
+      <input type="checkbox" checked={checked} onChange={onToggleBoth} />
+      <span className="check-label">Done</span>
+    </label>
   );
 
-  // ------- classic flat row (unchanged) -------
+  // ------- classic flat row ("Done today") -------
   if (!onToggle) {
     return (
-      <div className="lecture">
+      <div className="lecture flat">
         <div className="lecture-head">
           {showContext ? <span className="dot" style={{ background: color.base }} /> : null}
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -97,16 +119,10 @@ export const LectureRow = memo(function LectureRow({
                 </>
               ) : null}
               <span className="mono">{formatClock(ref.lecture.durationSec)}</span>
-              {speed !== 1 ? (
-                <span className="badge accent">{formatDuration(effSec)} at {speed}×</span>
-              ) : null}
-              {showScheduledDate && scheduledDate ? (
-                <span className="badge">due {scheduledDate.slice(5)}</span>
-              ) : null}
             </div>
           </div>
+          {bigCheck}
         </div>
-        {flags}
       </div>
     );
   }
@@ -129,37 +145,16 @@ export const LectureRow = memo(function LectureRow({
     );
   }
 
-  // ------- accordion row: expanded -------
+  // ------- accordion row: expanded (the focused lecture) -------
   return (
     <div className={`lecture acc open ${done ? 'done' : ''}`}>
       <button type="button" className="acc-head" onClick={onToggle} aria-expanded={true}>
-        <span className={`acc-tick ${fullyDone ? 'on' : ''}`} aria-hidden>
-          {fullyDone ? '✓' : ''}
-        </span>
         <span className="acc-name truncate">{ref.lecture.name}</span>
         <span className="acc-dur mono">{formatClock(ref.lecture.durationSec)}</span>
       </button>
       <div className="acc-body">
-        {showContext ? (
-          <div className="lecture-sub">
-            {!hideSubject ? (
-              <>
-                <span>{ref.subject.name}</span>
-                <span aria-hidden>·</span>
-              </>
-            ) : null}
-            <span className="truncate">{ref.topic.name}</span>
-            <span aria-hidden>·</span>
-            <span className="mono">{formatClock(ref.lecture.durationSec)}</span>
-            {speed !== 1 ? (
-              <span className="badge accent">{formatDuration(effSec)} at {speed}×</span>
-            ) : null}
-            {showScheduledDate && scheduledDate ? (
-              <span className="badge">due {scheduledDate.slice(5)}</span>
-            ) : null}
-          </div>
-        ) : null}
-        {flags}
+        {context}
+        {bigCheck}
       </div>
     </div>
   );

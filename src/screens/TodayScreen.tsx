@@ -1,51 +1,45 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useAppStore } from '../store/appStore';
 import { TopicSection } from '../components/TopicSection';
 import { Modal, ProgressBar, EmptyState } from '../components/ui';
 import { completedOnDate, computeTodayStats, dayCompletion } from '../lib/stats';
-import { dayOfYear, formatDateLong, formatDate, todayISO } from '../lib/dates';
+import { dayOfYear, formatDate, todayISO } from '../lib/dates';
 import { formatDuration } from '../lib/duration';
 import { STUDY_QUOTES } from '../lib/quotes';
 import { dueRevisions } from '../lib/revision';
 
 /**
- * Homepage. Deliberately quiet: a greeting, today's lectures, what got done,
- * and a nudge if something slipped. Everything else (calendar, backlog,
- * data) lives in its own tab.
+ * Homepage. Deliberately quiet - one idea per block:
+ *
+ *   1. greeting (collapsed to a single line by default; tap reveals the quote)
+ *   2. "Today: Xh" hours control (collapsed; soft per-day adjustment + Skip Day)
+ *   3. "Today we're studying: <Subject>" (a plain sentence, not a stat header)
+ *   4. topic -> lecture rows (accordion, one box per lecture) -> Questions
+ *
+ * One accent colour marks what needs action; everything else is neutral
+ * surface with whitespace-based hierarchy. No numeric "0/5" counters -
+ * the single progress bar and the checkbox states carry the information.
  */
 
 const GREETINGS = ['Hiiii', 'Hey', 'Hello', 'Namaste', 'Hi'];
 const GREETING_EMOJIS = ['👋', '😊', '🙃', '😄', '☺️', '🙂'];
 
-/** How much scrolling (px, accumulated in one direction) flips the card. */
-const SCROLL_THRESHOLD = 32;
-
-function timeGreeting(hour: number): string {
-  if (hour >= 5 && hour < 12) return 'Good morning';
-  if (hour >= 12 && hour < 17) return 'Good afternoon';
-  if (hour >= 17 && hour < 21) return 'Good evening';
-  return 'Good night';
-}
-
 /**
- * The daily greeting card.
+ * The daily greeting.
  *
- * EXPANDED by default: greeting word + name + emoji, time-of-day + date, and
- * the day's quote (one per day, seeded off the day-of-year so it stays the
- * same all day long). Scrolling DOWN past the hysteresis threshold collapses
- * it to a single line ("Good morning, Priya · Tue 15 Sep"); scrolling back UP
- * past the threshold re-expands it. Small back-and-forth gestures reset the
- * accumulator, so they never cause jitter. A manual tap toggles the card and
- * wins until the next scroll direction change past the threshold. Collapse
- * state is local UI state only - never persisted.
+ * COLLAPSED by default: just the greeting line (word + name + emoji) - the
+ * date is deliberately NOT shown here, the app header already has it. Tapping
+ * the line reveals the day's quote (one per day, seeded off the day-of-year
+ * so it stays the same all day long) in the larger serif type; tapping again
+ * collapses it. Tap-toggle only - no scroll-based behaviour.
+ * Collapse state is local UI state only - never persisted.
  */
 function GreetingBox({ paceBadge }: { paceBadge: ReactNode }) {
   const planConfig = useAppStore((s) => s.planConfig);
   const updatePlan = useAppStore((s) => s.updatePlan);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
-  const [collapsed, setCollapsed] = useState(false);
-  const [manual, setManual] = useState<boolean | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
   const now = new Date();
   const day = dayOfYear(now);
@@ -53,102 +47,56 @@ function GreetingBox({ paceBadge }: { paceBadge: ReactNode }) {
   const emoji = GREETING_EMOJIS[Math.floor(day / 2) % GREETING_EMOJIS.length];
   const name = planConfig.studentName.trim();
   const quote = STUDY_QUOTES[day % STUDY_QUOTES.length];
-  const shown = manual ?? collapsed;
-
-  // Scroll-driven collapse with hysteresis: movement only counts while it
-  // keeps the same direction, and only past the threshold does anything flip.
-  useEffect(() => {
-    let lastY = window.scrollY;
-    let acc = 0;
-    const onScroll = () => {
-      const y = window.scrollY;
-      const dy = y - lastY;
-      lastY = y;
-      if (dy === 0) return;
-      if ((acc > 0 && dy < 0) || (acc < 0 && dy > 0)) acc = 0;
-      acc += dy;
-      if (acc >= SCROLL_THRESHOLD) {
-        setCollapsed(true);
-        setManual(null);
-        acc = 0;
-      } else if (acc <= -SCROLL_THRESHOLD) {
-        setCollapsed(false);
-        setManual(null);
-        acc = 0;
-      }
-    };
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
-  }, []);
 
   const onCardClick = (e: React.MouseEvent) => {
     // Taps on the pencil (or any control) do not toggle the card.
     if (e.target instanceof Element && e.target.closest('button, a, input')) return;
-    setManual(!shown);
+    setExpanded((v) => !v);
   };
 
   return (
-    <div className={`card greeting-card ${shown ? 'collapsed' : ''}`} onClick={onCardClick}>
+    <div className={`greeting ${expanded ? 'expanded' : ''}`} onClick={onCardClick}>
       <div className="greeting-top">
-        <div>
-          <div className="greeting-line">
-            {shown ? (
-              <>
-                {timeGreeting(now.getHours())}
-                {name ? `, ${name}` : ''} · {formatDate(todayISO())}
-              </>
-            ) : (
-              <>
-                {greeting}
-                {name ? (
-                  <>
-                    {' '}
-                    {name}
-                    <button
-                      className="greeting-edit"
-                      aria-label="Edit your name"
-                      onClick={() => {
-                        setDraft(name);
-                        setEditing(true);
-                      }}
-                    >
-                      ✏️
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    className="greeting-edit"
-                    aria-label="Set your name"
-                    onClick={() => {
-                      setDraft('');
-                      setEditing(true);
-                    }}
-                  >
-                    ✏️
-                  </button>
-                )}
-                <span aria-hidden> {emoji}</span>
-              </>
-            )}
-            <span className="greeting-chev" aria-hidden>
-              {shown ? '▸' : '▾'}
-            </span>
-          </div>
-          <div className="greeting-collapse">
-            <div className="greeting-collapse-inner">
-              {shown ? null : (
-                <div className="greeting-sub">
-                  {timeGreeting(now.getHours())} · {formatDateLong(todayISO())}
-                </div>
-              )}
-              <div className="greeting-quote">
-                “{quote.text}”
-                {quote.author && quote.author !== 'Unknown' ? ` — ${quote.author}` : ''}
-              </div>
-            </div>
-          </div>
+        <div className="greeting-line">
+          {greeting}
+          {name ? (
+            <>
+              {' '}
+              {name}
+              <button
+                className="greeting-edit"
+                aria-label="Edit your name"
+                onClick={() => {
+                  setDraft(name);
+                  setEditing(true);
+                }}
+              >
+                ✏️
+              </button>
+            </>
+          ) : (
+            <button
+              className="greeting-edit"
+              aria-label="Set your name"
+              onClick={() => {
+                setDraft('');
+                setEditing(true);
+              }}
+            >
+              ✏️
+            </button>
+          )}
+          <span aria-hidden> {emoji}</span>
         </div>
         {paceBadge}
+      </div>
+      <div className="greeting-collapse">
+        <div className="greeting-collapse-inner">
+          <div className="greeting-quote">
+            “{quote.text}”
+            {quote.author && quote.author !== 'Unknown' ? ` — ${quote.author}` : ''}
+          </div>
+        </div>
       </div>
 
       {editing ? (
@@ -185,6 +133,124 @@ function GreetingBox({ paceBadge }: { paceBadge: ReactNode }) {
             />
           </div>
         </Modal>
+      ) : null}
+    </div>
+  );
+}
+
+const fmtHours = (h: number) => `${Number.isInteger(h) ? h : h.toFixed(1)}h`;
+
+/**
+ * "Today: Xh" - the per-day hours control.
+ *
+ * Two completely separate mechanisms, deliberately not merged:
+ *  - the STOP SLIDER is a SOFT adjustment (planConfig.dayHours[date]): it
+ *    rebalances only this week - a shortfall rides onto the week's off day
+ *    (the same overflow day the Backlog feature uses), a surplus is pulled
+ *    off the week's last study day. `dailyHours` itself never changes.
+ *  - "Skip Day" is NOT soft: it adds today to planConfig.leaveDates through
+ *    the exact same path as any other leave day, so the whole remaining plan
+ *    shifts, as it would for any leave.
+ *
+ * The slider is centred on the plan's dailyHours, ±2h in 1-hour steps,
+ * floored above 1h (reaching 0 is exclusively Skip Day's job).
+ */
+function TodayHoursControl() {
+  const planConfig = useAppStore((s) => s.planConfig);
+  const scheduleByDate = useAppStore((s) => s.scheduleByDate);
+  const setDayHours = useAppStore((s) => s.setDayHours);
+  const addLeaveDates = useAppStore((s) => s.addLeaveDates);
+  const notify = useAppStore((s) => s.notify);
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<number | null>(null);
+
+  const today = todayISO();
+  const day = scheduleByDate.get(today);
+  // The control only makes sense on a real study day with lectures.
+  if (!day || day.type !== 'study' || day.lectureIds.length === 0) return null;
+
+  const plan = planConfig.dailyHours;
+  const override = planConfig.dayHours[today];
+  const current = override ?? plan;
+  const draftValue = draft ?? current;
+
+  // 1-hour stops around the plan hours, floored above 1h.
+  const stops = [plan - 2, plan - 1, plan, plan + 1, plan + 2].filter((h) => h >= 1);
+
+  const save = () => {
+    if (draftValue !== plan) {
+      setDayHours(today, draftValue);
+      notify(
+        draftValue < plan
+          ? `Today is ${fmtHours(draftValue)}. The difference rides onto your off day - the rest of the plan is untouched.`
+          : `Today is ${fmtHours(draftValue)}. Your week's last study day gets lighter by the same amount.`,
+      );
+    } else {
+      setDayHours(today, null); // back to plan = clear the override
+    }
+    setOpen(false);
+    setDraft(null);
+  };
+
+  const skipDay = () => {
+    // Same path as any other leave day - no special-casing.
+    addLeaveDates([today]);
+    notify('Today is off - added as a leave day. The rest of the plan carries over.');
+    setOpen(false);
+  };
+
+  return (
+    <div className={`hours ${open ? 'open' : ''}`}>
+      <button type="button" className="hours-row" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        <span>
+          Today: <b>{fmtHours(current)}</b>
+        </span>
+        {override !== undefined ? (
+          <span className="tiny faint">· plan {fmtHours(plan)}</span>
+        ) : null}
+        <span className="hours-chev" aria-hidden>
+          {open ? '▴' : '▾'}
+        </span>
+      </button>
+      {open ? (
+        <div className="hours-panel">
+          <div className="hours-stops" role="group" aria-label="Study hours for today">
+            {stops.map((h) => (
+              <button
+                key={h}
+                type="button"
+                className={`hours-stop ${draftValue === h ? 'on' : ''} ${h === plan ? 'plan' : ''}`}
+                onClick={() => setDraft(h)}
+                aria-pressed={draftValue === h}
+              >
+                {fmtHours(h)}
+                {h === plan ? <span className="hours-plan-mark">plan</span> : null}
+              </button>
+            ))}
+          </div>
+          <div className="row" style={{ gap: 8, marginTop: 10 }}>
+            <button className="btn sm primary" onClick={save}>
+              {draftValue === current ? 'Done' : 'Save'}
+            </button>
+            <button
+              className="btn sm ghost"
+              onClick={() => {
+                setOpen(false);
+                setDraft(null);
+              }}
+            >
+              Cancel
+            </button>
+            <span className="spacer" />
+            <button className="btn sm" onClick={skipDay}>
+              Skip Day
+            </button>
+          </div>
+          <div className="tiny faint" style={{ marginTop: 8 }}>
+            The slider only rebalances this week (shortfall → off day, surplus → the
+            week's last study day). Skip Day is a real leave day - the whole plan shifts.
+          </div>
+        </div>
       ) : null}
     </div>
   );
@@ -244,24 +310,15 @@ export function TodayScreen() {
         }
       />
 
-      <div className="card">
-        <div className="card-title">
-          <span>Today's lectures</span>
-          <span className="spacer" />
-          {day?.subjectName ? <span className="tiny faint">{day.subjectName}</span> : null}
-        </div>
+      <TodayHoursControl />
 
+      <div className="card study-card">
         {day?.type === 'study' && day.lectureIds.length ? (
           <>
-            <div className="row between tiny faint" style={{ marginBottom: 6 }}>
-              <span>
-                Watched {completion.watched}/{completion.total}
-              </span>
-              <span className="mono">
-                {formatDuration(completion.doneSec)} / {formatDuration(completion.plannedSec)}
-              </span>
+            <div className="study-sentence">
+              Today we&rsquo;re studying: <b>{day.subjectName}</b>
             </div>
-            <div style={{ marginBottom: 10 }}>
+            <div style={{ marginBottom: 12 }}>
               <ProgressBar
                 value={completion.doneSec}
                 max={completion.plannedSec}
@@ -270,7 +327,7 @@ export function TodayScreen() {
             </div>
             <TopicSection lectureIds={day.lectureIds} showContext={false} />
             {completion.allDone ? (
-              <div className="ok-box" style={{ marginTop: 12 }}>
+              <div className="ok-box" style={{ marginTop: 14 }}>
                 Everything planned for today is watched. Nice. Tomorrow's list is already
                 generated from what is left.
               </div>
@@ -310,7 +367,7 @@ export function TodayScreen() {
             <span>
               {formatDuration(doneTodaySec)} watched today <span aria-hidden>✓</span>
             </span>
-            <span className="greeting-chev" aria-hidden>
+            <span className="hours-chev" aria-hidden>
               {doneOpen ? '▴' : '▾'}
             </span>
           </button>

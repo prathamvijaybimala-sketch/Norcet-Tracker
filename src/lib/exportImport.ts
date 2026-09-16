@@ -147,6 +147,13 @@ export function normalizePlanConfig(plan: Record<string, unknown>): PlanConfig {
         ) as Record<string, string>)
       : {},
     backlogAnchor: typeof plan.backlogAnchor === 'string' ? plan.backlogAnchor : null,
+    dayHours: isObject(plan.dayHours)
+      ? (Object.fromEntries(
+          Object.entries(plan.dayHours).filter(
+            ([, v]) => typeof v === 'number' && Number.isFinite(v) && v >= 1 && v <= 16,
+          ),
+        ) as Record<string, number>)
+      : {},
   };
 }
 
@@ -164,6 +171,7 @@ export function defaultPlanConfig(startDate: string, subjectOrder: string[] = []
     studentName: '',
     offDayLectures: {},
     backlogAnchor: null,
+    dayHours: {},
   };
 }
 

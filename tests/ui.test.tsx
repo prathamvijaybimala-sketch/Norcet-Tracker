@@ -13,6 +13,7 @@ import App from '../src/App';
 import { useAppStore } from '../src/store/appStore';
 import { addDays, dayOfYear, todayISO } from '../src/lib/dates';
 import { nextOffDayOnOrAfter } from '../src/lib/schedule';
+import { computePlanStats } from '../src/lib/stats';
 import { STUDY_QUOTES } from '../src/lib/quotes';
 
 const demo = readFileSync(resolve(__dirname, '../public/demo-curriculum.json'), 'utf8');
@@ -34,7 +35,7 @@ describe('import screen', () => {
   it('shows the import screen when there is no curriculum', async () => {
     await boot();
     expect(await screen.findByText('Import your curriculum')).toBeTruthy();
-    expect(screen.queryByText("Today's lectures")).toBeNull();
+    expect(screen.queryByText(/Today we.re studying/)).toBeNull();
   });
 
   it('parses pasted JSON and shows a summary table', async () => {
@@ -63,7 +64,7 @@ describe('today screen', () => {
   it('lists today\'s lectures and recomputes when a box is ticked', async () => {
     await boot();
     await importDemo();
-    expect(await screen.findByText("Today's lectures")).toBeTruthy();
+    expect(await screen.findByText(/Today we.re studying/)).toBeTruthy();
 
     const state = () => useAppStore.getState();
     const todayIds = [...(state().scheduleByDate.get(state().planConfig.startDate)?.lectureIds ?? [])];
@@ -73,16 +74,17 @@ describe('today screen', () => {
     const lecture = state().lectureIndex.get(todayIds[0])!;
     expect(screen.getByText(lecture.lecture.name)).toBeTruthy();
 
-    // Tick "Lecture" on the first lecture row (two boxes per lecture: Lecture + Notes).
+    // Tick the single "Done" box on the first (auto-expanded) lecture row.
     const rows = screen.getAllByText(lecture.lecture.name);
     const row = rows[0].closest('.lecture') as HTMLElement;
     const boxes = within(row).getAllByRole('checkbox');
-    expect(boxes).toHaveLength(2);
+    expect(boxes).toHaveLength(1); // one box per lecture (watched + notes together)
     fireEvent.click(boxes[0]);
 
     await waitFor(() =>
       expect(useAppStore.getState().progress[todayIds[0]]?.lectureWatched).toBe(true),
     );
+    expect(useAppStore.getState().progress[todayIds[0]]?.notesDone).toBe(true); // set together
     // The schedule regenerated: the lecture is gone from today's planned list…
     expect(state().scheduleByDate.get(state().planConfig.startDate)?.lectureIds).not.toContain(
       todayIds[0],
@@ -92,39 +94,49 @@ describe('today screen', () => {
     expect(state().schedule.length).toBeLessThanOrEqual(before);
   });
 
-  it('keeps lecture boxes independent, with Questions at topic level', async () => {
+  it('uses ONE box per lecture (sets watched + notes together), Questions stays per topic', async () => {
     await boot();
     await importDemo();
-    await screen.findByText("Today's lectures");
+    await screen.findByText(/Today we.re studying/);
 
     const state = () => useAppStore.getState();
     const firstId = state().schedule[0].lectureIds[0];
-    const row = screen.getAllByText(state().lectureIndex.get(firstId)!.lecture.name)[0].closest(
-      '.lecture',
-    ) as HTMLElement;
-    const boxes = within(row).getAllByRole('checkbox') as HTMLInputElement[];
-    expect(boxes).toHaveLength(2); // Lecture + Notes only, per lecture
-    fireEvent.click(boxes[1]); // notes only
-    const p = state().progress[firstId];
-    expect(p.lectureWatched).toBe(false);
-    expect(p.notesDone).toBe(true);
-    expect(p.questionsDone).toBe(false);
+    const nameOf = (id: string) => state().lectureIndex.get(id)!.lecture.name;
+    const row = screen.getAllByText(nameOf(firstId))[0].closest('.lecture') as HTMLElement;
+    const boxes = within(row).getAllByRole('checkbox');
+    expect(boxes).toHaveLength(1); // one box per lecture
+    fireEvent.click(boxes[0]);
+    // Both fields set in the same update (data model unchanged)…
+    expect(state().progress[firstId].lectureWatched).toBe(true);
+    expect(state().progress[firstId].notesDone).toBe(true);
+    expect(state().progress[firstId].questionsDone).toBe(false);
 
-    // Questions is a single checkbox on the topic header and ticks the whole
-    // topic at once.
+    // …and unticking clears both. The watched lecture now sits in "Done
+    // today", so untick it from there.
+    fireEvent.click(await screen.findByText(/watched today/));
+    await waitFor(() =>
+      expect(document.querySelector('.done-list')!.className).toContain('open'),
+    );
+    const doneRow = within(document.querySelector('.done-list') as HTMLElement)
+      .getByText(nameOf(firstId))
+      .closest('.lecture') as HTMLElement;
+    fireEvent.click(within(doneRow).getByRole('checkbox'));
+    expect(state().progress[firstId].lectureWatched).toBe(false);
+    expect(state().progress[firstId].notesDone).toBe(false);
+
+    // Questions is a single per-topic checkbox (at the end of the topic) and
+    // ticks the whole topic at once.
     const topic = state().lectureIndex.get(firstId)!.topic;
     fireEvent.click(screen.getByRole('checkbox', { name: `Questions done for ${topic.name}` }));
     for (const l of topic.lectures) {
       expect(state().progress[l.id]?.questionsDone).toBe(true);
     }
-    // Still scheduled (only "watched" removes a lecture from the plan).
-    expect(state().scheduleByLecture.get(firstId)).toBe(state().schedule[0].date);
   });
 
   it('keeps exactly one lecture row expanded at a time (accordion)', async () => {
     await boot();
     await importDemo();
-    await screen.findByText("Today's lectures");
+    await screen.findByText(/Today we.re studying/);
 
     const state = () => useAppStore.getState();
     const dayIds = state().scheduleByDate.get(state().planConfig.startDate)!.lectureIds;
@@ -151,7 +163,7 @@ describe('today screen', () => {
   it('auto-advances to the next row when the open row is ticked', async () => {
     await boot();
     await importDemo();
-    await screen.findByText("Today's lectures");
+    await screen.findByText(/Today we.re studying/);
 
     const state = () => useAppStore.getState();
     const dayIds = state().scheduleByDate.get(state().planConfig.startDate)!.lectureIds;
@@ -161,19 +173,16 @@ describe('today screen', () => {
     const openName = () => document.querySelector('.lecture.acc.open .acc-name')!.textContent;
     expect(openName()).toBe(nameOf(a));
 
-    // Ticking "Lecture" on the open row: the watched lecture leaves the
-    // schedule and the accordion advances to the next one - no reload, the
-    // list container is not remounted.
+    // One tap on the single "Done" box: the lecture leaves the schedule and
+    // the accordion advances to the next one - no reload, no remount.
     fireEvent.click(
-      within(document.querySelector('.lecture.acc.open') as HTMLElement).getByRole('checkbox', {
-        name: 'Lecture',
-      }),
+      within(document.querySelector('.lecture.acc.open') as HTMLElement).getByRole('checkbox'),
     );
     await waitFor(() => expect(openName()).toBe(nameOf(b)));
     expect(document.querySelectorAll('.lecture.acc.open')).toHaveLength(1);
 
-    // The finished lecture shows up in the "Done today" summary; expand it
-    // and finish its independent "Notes" box from the flat list.
+    // The finished lecture shows up in the "Done today" summary with its box
+    // pre-ticked (watched + notes came together).
     fireEvent.click(await screen.findByText(/watched today/));
     await waitFor(() =>
       expect(document.querySelector('.done-list')!.className).toContain('open'),
@@ -181,10 +190,10 @@ describe('today screen', () => {
     const doneRow = within(document.querySelector('.done-list') as HTMLElement)
       .getByText(nameOf(a))
       .closest('.lecture') as HTMLElement;
-    fireEvent.click(within(doneRow).getByRole('checkbox', { name: 'Notes' }));
-    await waitFor(() => expect(state().progress[a]?.notesDone).toBe(true));
+    const box = within(doneRow).getByRole('checkbox') as HTMLInputElement;
+    expect(box.checked).toBe(true);
     expect(state().progress[a]?.lectureWatched).toBe(true);
-    // Notes ticking did NOT open the accordion or create extra progress.
+    expect(state().progress[a]?.notesDone).toBe(true);
     expect(openName()).toBe(nameOf(b));
     expect(document.querySelectorAll('.lecture.acc.open')).toHaveLength(1);
   });
@@ -192,7 +201,7 @@ describe('today screen', () => {
   it('shows "Done today" as a one-line summary that expands on tap', async () => {
     await boot();
     await importDemo();
-    await screen.findByText("Today's lectures");
+    await screen.findByText(/Today we.re studying/);
 
     const state = () => useAppStore.getState();
     const id = state().scheduleByDate.get(state().planConfig.startDate)!.lectureIds[0];
@@ -209,7 +218,7 @@ describe('today screen', () => {
   it('queues a lecture for revision only when all three boxes are ticked', async () => {
     await boot();
     await importDemo();
-    await screen.findByText("Today's lectures");
+    await screen.findByText(/Today we.re studying/);
 
     const state = () => useAppStore.getState();
     const firstId = state().schedule[0].lectureIds[0];
@@ -219,6 +228,123 @@ describe('today screen', () => {
     state().setFlag(firstId, 'questionsDone', true);
     expect(Object.keys(state().revision)).toEqual([firstId]);
     expect(state().revision[firstId].intervalStage).toBe(0);
+  });
+});
+
+describe('today hours control', () => {
+  const state = () => useAppStore.getState();
+  const count = (date: string) => state().scheduleByDate.get(date)?.lectureIds.length ?? 0;
+  const totalLectures = () =>
+    state().schedule.reduce((n, d) => n + d.lectureIds.length, 0);
+  /** First study day on/after `date` - must be untouched by week-scoped edits. */
+  const nextStudyDayIds = (date: string) => {
+    const day = state().schedule.find((d) => d.date > date && d.type === 'study');
+    return day?.lectureIds ?? [];
+  };
+
+  async function openHours() {
+    await boot();
+    await importDemo();
+    await screen.findByText(/Today we.re studying/);
+    fireEvent.click(await screen.findByRole('button', { name: /Today:/ }));
+    await screen.findByText(/only rebalances this week/);
+  }
+
+  it('increasing today via the slider pulls the tail off the week\'s last study day (soft, week-scoped)', async () => {
+    await openHours();
+    const today = todayISO();
+    const offDay = nextOffDayOnOrAfter(today, state().planConfig)!;
+    // The week's last study day AFTER today (e.g. Saturday) absorbs the surplus.
+    const absorber = state()
+      .schedule.filter((d) => d.type === 'study' && d.date > today && d.date < offDay)
+      .map((d) => d.date)
+      .pop()!;
+    const todayBefore = count(today);
+    const absorberBefore = count(absorber);
+    const nextWeekBefore = nextStudyDayIds(offDay);
+    const totalBefore = totalLectures();
+    expect(absorberBefore).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByText('4h'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(state().planConfig.dayHours[today]).toBe(4));
+    // Today grew, the week's last study day shrank by the same amount…
+    expect(count(today)).toBeGreaterThan(todayBefore);
+    const pulled = count(today) - todayBefore;
+    expect(count(absorber)).toBe(absorberBefore - pulled);
+    // …no lectures created or destroyed, next week untouched…
+    expect(totalLectures()).toBe(totalBefore);
+    expect(nextStudyDayIds(offDay)).toEqual(nextWeekBefore);
+    // …and it never touches the leave-day / backlog machinery or dailyHours.
+    expect(state().planConfig.dailyHours).toBe(3);
+    expect(state().planConfig.leaveDates).toEqual([]);
+    expect(state().planConfig.offDayLectures).toEqual({});
+    expect(state().planConfig.backlogAnchor).toBeNull();
+    // The compact row now shows the override with a plan hint.
+    expect(screen.getByRole('button', { name: /Today: 4h/ })).toBeTruthy();
+  });
+
+  it('reducing today via the slider rides the shortfall onto the week\'s off day (soft)', async () => {
+    await openHours();
+    const today = todayISO();
+    const offDay = nextOffDayOnOrAfter(today, state().planConfig)!;
+    expect(state().scheduleByDate.get(offDay)?.type).toBe('off'); // off day to start
+    const todayBefore = count(today);
+    const nextWeekBefore = nextStudyDayIds(offDay);
+    const totalBefore = totalLectures();
+
+    fireEvent.click(screen.getByText('2h'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(state().planConfig.dayHours[today]).toBe(2));
+    // Today shrank; the off day opened as a study day carrying the tail.
+    expect(count(today)).toBeLessThan(todayBefore);
+    await waitFor(() => expect(count(offDay)).toBeGreaterThan(0));
+    expect(state().scheduleByDate.get(offDay)?.type).toBe('study');
+    // Total content unchanged, next week untouched, no leave-day side effects.
+    expect(totalLectures()).toBe(totalBefore);
+    expect(nextStudyDayIds(offDay)).toEqual(nextWeekBefore);
+    expect(state().planConfig.leaveDates).toEqual([]);
+    expect(state().planConfig.dailyHours).toBe(3);
+  });
+
+  it('Skip Day adds today to leaveDates - a real leave day that shifts the whole plan', async () => {
+    await openHours();
+    const today = todayISO();
+    const finishBefore = computePlanStats(state().schedule).finishDate;
+    const todayLectures = [...state().scheduleByDate.get(today)!.lectureIds];
+    const allBefore = new Set(state().schedule.flatMap((d) => d.lectureIds));
+    expect(todayLectures.length).toBeGreaterThan(0);
+    expect(state().planConfig.leaveDates).not.toContain(today);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Skip Day' }));
+
+    await waitFor(() => expect(state().planConfig.leaveDates).toContain(today));
+    // Today is now a leave day: zero lectures, flagged as leave…
+    expect(count(today)).toBe(0);
+    expect(state().scheduleByDate.get(today)?.isLeaveDay).toBe(true);
+    // …and the plan shifts exactly like any leave day: every lecture that
+    // sat on today carries forward to a LATER date, nothing is dropped…
+    const dateOf = new Map(state().schedule.flatMap((d) => d.lectureIds.map((id) => [id, d.date])));
+    for (const id of todayLectures) {
+      const after = dateOf.get(id);
+      expect(after).toBeTruthy();
+      expect(after! > today, `${id} must move to a later date`).toBe(true); // ISO: lex = chronological
+    }
+    // …no lecture is lost or duplicated, and the finish date never moves
+    // earlier (slack later in the plan may absorb the shift).
+    const allAfter = state().schedule.flatMap((d) => d.lectureIds);
+    expect(new Set(allAfter)).toEqual(allBefore);
+    expect(allAfter).toHaveLength([...allBefore].length);
+    const finishAfter = computePlanStats(state().schedule).finishDate;
+    expect(finishAfter).not.toBeNull();
+    // ISO dates: lexicographic order = chronological order.
+    expect(finishAfter! >= (finishBefore ?? '')).toBe(true);
+    // …and it deliberately does NOT touch the soft-override machinery.
+    expect(state().planConfig.dayHours).toEqual({});
+    expect(state().planConfig.offDayLectures).toEqual({});
+    expect(state().planConfig.backlogAnchor).toBeNull();
   });
 });
 
@@ -357,50 +483,52 @@ describe('revision screen', () => {
 });
 
 describe('greeting and theme', () => {
-  it('shows the greeting box with a time-of-day line and a quote', async () => {
+  it('shows only the greeting line by default (no date), tap reveals the quote', async () => {
     await boot();
     await importDemo();
-    await screen.findByText("Today's lectures");
+    await screen.findByText(/Today we.re studying/);
 
+    const greeting = document.querySelector('.greeting') as HTMLElement;
+    // Collapsed by default: just the greeting line, no date line.
+    expect(greeting.className).not.toContain('expanded');
     const line = document.querySelector('.greeting-line');
     expect(line).toBeTruthy();
     expect(line!.textContent).toMatch(/Hiiii|Hey|Hello|Namaste|Hi/);
-    const sub = document.querySelector('.greeting-sub')!.textContent ?? '';
-    expect(sub).toMatch(/Good (morning|afternoon|evening|night)/);
+    expect(line!.textContent).not.toMatch(/\bSep\b/); // no date in the greeting
+    expect(document.querySelector('.greeting-sub')).toBeNull();
     expect(document.querySelector('.greeting-quote')).toBeTruthy();
+
+    // Tap reveals the quote; tapping again collapses it.
+    fireEvent.click(greeting);
+    expect(greeting.className).toContain('expanded');
+    fireEvent.click(greeting);
+    expect(greeting.className).not.toContain('expanded');
   });
 
-  it('shows the day\'s quote from the quote bank, expanded by default, tap-toggleable', async () => {
+  it('shows the day\'s quote from the quote bank (same quote for the whole day)', async () => {
     await boot();
     await importDemo();
-    await screen.findByText("Today's lectures");
+    await screen.findByText(/Today we.re studying/);
 
     // Daily quote: seeded off the day-of-year, so the exact quote is known.
     const expected = STUDY_QUOTES[dayOfYear(new Date()) % STUDY_QUOTES.length];
     const quote = document.querySelector('.greeting-quote')!.textContent ?? '';
     expect(quote).toContain(expected.text);
     expect(quote.startsWith('“')).toBe(true);
-    // Expanded by default: the time-of-day line is visible.
-    expect(document.querySelector('.greeting-sub')!.textContent).toMatch(
-      /Good (morning|afternoon|evening|night)/,
-    );
 
-    const card = document.querySelector('.greeting-card') as HTMLElement;
-    // Manual tap collapses to the one-line summary ("Good morning · Tue 15 Sep").
+    // Collapsed by default; tap-toggle both ways.
+    const card = document.querySelector('.greeting') as HTMLElement;
+    expect(card.className).not.toContain('expanded');
     fireEvent.click(card);
-    expect(card.className).toContain('collapsed');
-    const line = document.querySelector('.greeting-line')!.textContent ?? '';
-    expect(line).toMatch(/Good (morning|afternoon|evening|night)/);
-    expect(line).toMatch(/\bSep\b/);
-    // And the next tap expands it again.
+    expect(card.className).toContain('expanded');
     fireEvent.click(card);
-    expect(card.className).not.toContain('collapsed');
+    expect(card.className).not.toContain('expanded');
   });
 
   it('toggles between dark and light mode', async () => {
     await boot();
     await importDemo();
-    await screen.findByText("Today's lectures");
+    await screen.findByText(/Today we.re studying/);
 
     fireEvent.click(screen.getByRole('button', { name: /Switch to light mode/ }));
     await waitFor(() => expect(document.documentElement.dataset.theme).toBe('light'));
@@ -411,7 +539,7 @@ describe('greeting and theme', () => {
   it('lets the user set the name shown in the greeting', async () => {
     await boot();
     await importDemo();
-    await screen.findByText("Today's lectures");
+    await screen.findByText(/Today we.re studying/);
 
     fireEvent.click(screen.getByRole('button', { name: 'Set your name' }));
     const dialog = await screen.findByRole('dialog');
