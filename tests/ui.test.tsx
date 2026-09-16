@@ -250,32 +250,28 @@ describe('today hours control', () => {
     await screen.findByText(/only rebalances this week/);
   }
 
-  it('increasing today via the slider pulls the tail off the week\'s last study day (soft, week-scoped)', async () => {
+  it('increasing today reflows the week: later days get lighter (soft, week-scoped)', async () => {
     await openHours();
     const today = todayISO();
     const offDay = nextOffDayOnOrAfter(today, state().planConfig)!;
-    // The week's last study day AFTER today (e.g. Saturday) absorbs the surplus.
-    const absorber = state()
-      .schedule.filter((d) => d.type === 'study' && d.date > today && d.date < offDay)
-      .map((d) => d.date)
-      .pop()!;
     const todayBefore = count(today);
-    const absorberBefore = count(absorber);
     const nextWeekBefore = nextStudyDayIds(offDay);
     const totalBefore = totalLectures();
-    expect(absorberBefore).toBeGreaterThan(0);
+    expect(todayBefore).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByText('4h'));
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(state().planConfig.dayHours[today]).toBe(4));
-    // Today grew, the week's last study day shrank by the same amount…
+    // Today grew…
     expect(count(today)).toBeGreaterThan(todayBefore);
-    const pulled = count(today) - todayBefore;
-    expect(count(absorber)).toBe(absorberBefore - pulled);
-    // …no lectures created or destroyed, next week untouched…
+    // …and the whole week reflows around it: no lectures created or
+    // destroyed (the week's later days carry the difference), next week
+    // untouched…
     expect(totalLectures()).toBe(totalBefore);
     expect(nextStudyDayIds(offDay)).toEqual(nextWeekBefore);
+    // …no negative loads anywhere.
+    for (const day of state().schedule) expect(day.plannedSec).toBeGreaterThanOrEqual(0);
     // …and it never touches the leave-day / backlog machinery or dailyHours.
     expect(state().planConfig.dailyHours).toBe(3);
     expect(state().planConfig.leaveDates).toEqual([]);

@@ -222,15 +222,31 @@ function BacklogTab() {
 
   const today = todayISO();
 
-  /** Lectures scheduled on past days that are still unwatched. */
+  /**
+   * Lectures scheduled on past days that are still unwatched, plus any
+   * unwatched lecture the plan no longer schedules at all (the tail that
+   * drops off when a day's hours are reduced on a plan with no off day -
+   * `date` is empty for those).
+   */
   const missed = useMemo(() => {
     const out: { id: string; date: string }[] = [];
+    const scheduled = new Set<string>();
     for (const d of schedule) {
-      if (d.type !== 'study' || d.date >= today) continue;
-      for (const id of d.lectureIds) out.push({ id, date: d.date });
+      if (d.type !== 'study') continue;
+      for (const id of d.lectureIds) {
+        scheduled.add(id);
+        if (d.date < today) out.push({ id, date: d.date });
+      }
+    }
+    const included = new Set(planConfig.subjectOrder);
+    for (const [id, ref] of lectureIndex) {
+      if (progress[id]?.lectureWatched) continue;
+      if (!included.has(ref.subject.id)) continue;
+      if (scheduled.has(id)) continue;
+      out.push({ id, date: '' });
     }
     return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  }, [schedule, today]);
+  }, [schedule, lectureIndex, planConfig.subjectOrder, progress, today]);
 
   /** Lectures parked on off days, soonest first. */
   const moved = useMemo(
@@ -279,7 +295,9 @@ function BacklogTab() {
                       <span className="mono">{formatDuration(ref.lecture.durationSec)}</span>
                     </div>
                   </div>
-                  <span className="badge warn">was due {formatDate(date)}</span>
+                  <span className="badge warn">
+                    {date ? `was due ${formatDate(date)}` : 'dropped from the plan'}
+                  </span>
                 </div>
                 <div className="row" style={{ gap: 8 }}>
                   {offDay ? (

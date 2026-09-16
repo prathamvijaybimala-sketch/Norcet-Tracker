@@ -283,31 +283,39 @@ export function generateSchedule(
 /**
  * Per-day hours override (the Today screen's "Today: Xh" slider, section 7).
  *
- * One day's override is a SOFT, week-scoped adjustment layered on top of the
- * packed plan. It never changes `planConfig.dailyHours` and never shifts the
- * plan beyond its absorbing day, so next week always resumes normal pacing:
+ * An override is a SOFT, week-scoped adjustment layered on top of the packed
+ * plan. It never changes `planConfig.dailyHours`, and the week's lecture pool
+ * is the lectures the base plan already assigned to that week - so NEXT WEEK
+ * always resumes normal pacing, exactly as before.
  *
- *  - DAY REDUCED (override < plan hours): the lectures that no longer fit on
- *    the day (its tail, whole lectures only - we never split a lecture) move
- *    onto that week's off day: the first off day on/after the reduced day,
- *    i.e. the same overflow day the Backlog feature uses. Every other day
- *    keeps exactly the lectures it already had - the rest of the plan stays
- *    put, the same way "To (off day)" does.
+ * When a week has one or more overrides, the WHOLE WEEK IS RE-PACKED from
+ * scratch (that week's study days, in date order, from the week's lecture
+ * pool):
  *
- *  - DAY INCREASED (override > plan hours): the matching whole-lecture tail
- *    is pulled OFF the week's last study day (e.g. Saturday) and appended to
- *    the increased day. She is getting ahead, so the week's final day has
- *    less to do. The pull is capped at the last day's load (never negative),
- *    and if the increased day IS the last study day there is nothing left in
- *    the week to absorb the surplus, so the override is a no-op.
+ *  - each day takes the next lectures that fit its own capacity (override
+ *    hours when overridden, plan hours otherwise); a lecture that does not
+ *    fit is carried WHOLE to the next day, and a day never mixes subjects
+ *    (a new subject always starts on a fresh day, as in the main packer);
+ *  - DAY REDUCED: the week can no longer hold its pool, so the remaining tail
+ *    rides onto the week's off day - the first off/leave day on/after the
+ *    week's last study day, i.e. the same overflow day the Backlog feature
+ *    uses. If the plan has NO off day (studying 7 days a week), the tail is
+ *    simply dropped: it stays unwatched and unscheduled, and the Backlog tab
+ *    lists it as missed (restoring the day's hours puts it straight back).
+ *  - DAY INCREASED: the week holds more than its pool, so the later days
+ *    (typically the week's last study day) get lighter or empty out - capped
+ *    at zero, never negative, nothing pulled from next week. If the
+ *    increased day is already the week's last study day the week's pool
+ *    simply fills the days as before: a natural no-op.
  *
- *  - No off day exists in the plan (studying 7 days a week): a reduction has
- *    nowhere to ride, so it is a no-op.
+ * Lectures deliberately parked on an off day via Backlog ("To (off day)")
+ * keep their spot and are excluded from the reflowed pool. Weeks without
+ * overrides are left exactly as the base plan packed them, so multiple
+ * overrides in different weeks compose independently, and two overrides in
+ * the same week are handled by one re-pack.
  *
- * Days that no longer exist in the assignment (fully watched, a leave day, a
- * buffer day) are skipped. Multiple overrides are applied in date order
- * against the evolving assignment, so two overrides in the same week compose
- * without double-moving a lecture.
+ * Days that are not study days in the base assignment (fully watched, a
+ * leave day, a buffer day) carry no override.
  *
  * Mutates `assigned` (and calls `onMark` for a newly opened off day).
  */
@@ -321,107 +329,133 @@ export function applyDayHourOverrides(
   const effOf = (id: string) => lectureEff.get(id) ?? 0;
   const loadOf = (ids: string[]) => ids.reduce((n, id) => n + effOf(id), 0);
 
-  const entries = Object.entries(planConfig.dayHours).sort(([a], [b]) => (a < b ? -1 : 1));
-  for (const [date, targetHours] of entries) {
-    const day = assigned.get(date);
-    if (!day || day.type !== 'study' || day.lectureIds.length === 0) continue;
+  // Snapshot the assignment BEFORE any override is applied: each affected
+  // week re-packs itself from its own base state, so overrides in different
+  // weeks never interfere and multiple overrides in one week re-pack once.
+  const base = new Map<string, Assigned>();
+  for (const [date, day] of assigned) {
+    base.set(date, { ...day, lectureIds: [...day.lectureIds] });
+  }
 
-    const targetSec = Math.round(targetHours * 3600);
-    const loadSec = day.plannedSec;
+  // The weeks that carry at least one override on a real study day.
+  const weeks = new Set<string>();
+  for (const date of Object.keys(planConfig.dayHours)) {
+    const day = base.get(date);
+    if (day && day.type === 'study') weeks.add(startOfWeek(date));
+  }
 
-    if (targetSec < loadSec) {
-      // -------- reduced: the day's tail rides onto the week's off day --------
-      const offDay = nextOffDayOnOrAfter(date, planConfig);
-      if (!offDay) continue; // 7-day plan: no off day, nothing to absorb it
-      const { keep, tail } = splitAtCapacity(day.lectureIds, targetSec, effOf);
-      if (tail.length === 0) continue;
-      day.lectureIds = keep;
-      day.plannedSec = loadOf(keep);
+  const parked = new Set(Object.keys(planConfig.offDayLectures ?? {}));
 
-      // Same merge behaviour as the backlog off-day placement: append when
-      // the day already exists (a shift-opened overflow day, a buffer day),
-      // otherwise open it as a study day.
-      const existing = assigned.get(offDay);
-      if (existing) {
-        existing.lectureIds.push(...tail);
-        existing.plannedSec += loadOf(tail);
+  for (const weekStart of [...weeks].sort()) {
+    // The week's study days, in date order (exactly the days the base plan
+    // assigned to this week - a day that was already empty stays empty).
+    // A day that holds ONLY parked backlog lectures is left alone: it keeps
+    // its parked lectures exactly where she parked them.
+    const weekDays: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(weekStart, i);
+      const hit = base.get(d);
+      if (
+        hit &&
+        hit.type === 'study' &&
+        hit.lectureIds.some((id) => !parked.has(id))
+      ) {
+        weekDays.push(d);
+      }
+    }
+    if (weekDays.length === 0) continue;
+
+    // The main packer places each subject on consecutive days, so the week's
+    // study days group into runs, one per subject (in order).
+    const runs: { subjectId: string; days: string[] }[] = [];
+    for (const d of weekDays) {
+      const sid = base.get(d)!.subjectId;
+      if (runs.length > 0 && runs[runs.length - 1].subjectId === sid) {
+        runs[runs.length - 1].days.push(d);
       } else {
-        const first = tail.map(subjectOf).find(Boolean);
-        if (!first) continue;
-        onMark(offDay, {
-          type: 'study',
-          subjectId: first.subjectId,
-          subjectName: first.subjectName,
-          lectureIds: [...tail],
-          plannedSec: loadOf(tail),
-        });
+        runs.push({ subjectId: sid, days: [d] });
       }
-    } else if (targetSec > loadSec) {
-      // -------- increased: pull the week's last study day's tail here --------
-      const weekStart = startOfWeek(date);
-      let lastAfter: string | null = null;
-      for (let i = 0; i < 7; i++) {
-        const d = addDays(weekStart, i);
-        if (d <= date) continue; // only days AFTER the increased day can give up load
-        const hit = assigned.get(d);
-        if (hit && hit.type === 'study' && hit.lectureIds.length > 0) lastAfter = d;
+    }
+
+    // The week's lecture pool as blocks, in the SAME order as the runs: the
+    // base plan's lectures for each run's days, minus anything deliberately
+    // parked on an off day (parked lectures keep their spot).
+    const blocks = runs.map((run) =>
+      run.days.flatMap((d) => base.get(d)!.lectureIds).filter((id) => !parked.has(id)),
+    );
+
+    // The week's off day: the first off/leave day on/after the week's last
+    // study day - the same overflow day the Backlog feature uses.
+    const absorber = nextOffDayOnOrAfter(weekDays[weekDays.length - 1], planConfig);
+    const flush = (ids: string[]) => {
+      if (!absorber || ids.length === 0) return;
+      const existing = assigned.get(absorber);
+      if (existing) {
+        existing.lectureIds.push(...ids);
+        existing.plannedSec += loadOf(ids);
+      } else {
+        const first = ids.map(subjectOf).find(Boolean);
+        if (first) {
+          onMark(absorber, {
+            type: 'study',
+            subjectId: first.subjectId,
+            subjectName: first.subjectName,
+            lectureIds: ids,
+            plannedSec: loadOf(ids),
+          });
+        }
       }
-      if (!lastAfter) continue; // the increased day is the week's last: no-op
-      const lastDay = assigned.get(lastAfter)!;
-      const pullSec = Math.min(targetSec - loadSec, lastDay.plannedSec);
-      const { keep, tail } = splitTail(lastDay.lectureIds, pullSec, effOf);
-      if (tail.length === 0) continue;
-      lastDay.lectureIds = keep;
-      lastDay.plannedSec = loadOf(keep);
-      day.lectureIds = [...day.lectureIds, ...tail]; // chronological order kept
-      day.plannedSec = loadOf(day.lectureIds);
-    }
-  }
-}
+    };
 
-/**
- * Split `ids` (chronological) into the longest prefix that fits `targetSec`
- * and the remaining tail. Mirrors the packer's convention: the first lecture
- * always stays, even if it overflows the target.
- */
-function splitAtCapacity(
-  ids: string[],
-  targetSec: number,
-  effOf: (id: string) => number,
-): { keep: string[]; tail: string[] } {
-  const keep: string[] = [];
-  const tail: string[] = [];
-  let used = 0;
-  for (const id of ids) {
-    if (keep.length > 0 && used + effOf(id) > targetSec) tail.push(id);
-    else {
-      keep.push(id);
-      used += effOf(id);
-    }
-  }
-  return { keep, tail };
-}
+    // Re-pack each subject's run across its days, with each day's own
+    // (possibly overridden) capacity.
+    runs.forEach((run, j) => {
+      const block = blocks[j];
+      let cursor = 0;
+      for (const d of run.days) {
+        const hours = planConfig.dayHours[d] ?? planConfig.dailyHours;
+        const capSec = Math.round(hours * 3600);
+        const ids: string[] = [];
+        let used = 0;
+        while (cursor < block.length) {
+          const id = block[cursor];
+          const cost = effOf(id);
+          if (ids.length > 0 && used + cost > capSec) break; // carry whole
+          ids.push(id);
+          used += cost;
+          cursor++;
+          if (used >= capSec) break;
+        }
 
-/**
- * Cut whole lectures from the END of `ids` until at least `cutSec` of load is
- * removed; returns the remainder (keep) and the removed tail in chronological
- * order. The last lecture is always taken whole once the cut starts.
- */
-function splitTail(
-  ids: string[],
-  cutSec: number,
-  effOf: (id: string) => number,
-): { keep: string[]; tail: string[] } {
-  const keep = [...ids];
-  const tail: string[] = [];
-  let remaining = cutSec;
-  while (remaining > 0 && keep.length > 0) {
-    const id = keep.pop() as string;
-    tail.push(id);
-    remaining -= effOf(id);
+        if (ids.length === 0) {
+          // Capped at zero: the day empties out and drops from the plan.
+          if (assigned.has(d)) assigned.delete(d);
+        } else {
+          const existing = assigned.get(d);
+          if (existing) {
+            existing.lectureIds = ids;
+            existing.plannedSec = used;
+          } else {
+            const first = subjectOf(ids[0]);
+            if (first) {
+              onMark(d, {
+                type: 'study',
+                subjectId: first.subjectId,
+                subjectName: first.subjectName,
+                lectureIds: ids,
+                plannedSec: used,
+              });
+            }
+          }
+        }
+      }
+      // Lectures this subject's run could no longer hold (a reduced day)
+      // ride onto the week's off day. With no off day (7-days-a-week plan)
+      // they are dropped on purpose: unwatched and unscheduled, listed as
+      // missed in the Backlog tab; restoring the hours puts them back.
+      if (cursor < block.length) flush(block.slice(cursor));
+    });
   }
-  tail.reverse();
-  return { keep, tail };
 }
 
 /** Monday of the calendar week (Mon..Sun) containing `iso`. */

@@ -7,6 +7,7 @@ import { dayOfYear, formatDate, todayISO } from '../lib/dates';
 import { formatDuration } from '../lib/duration';
 import { STUDY_QUOTES } from '../lib/quotes';
 import { dueRevisions } from '../lib/revision';
+import { nextOffDayOnOrAfter } from '../lib/schedule';
 
 /**
  * Homepage. Deliberately quiet - one idea per block:
@@ -145,9 +146,11 @@ const fmtHours = (h: number) => `${Number.isInteger(h) ? h : h.toFixed(1)}h`;
  *
  * Two completely separate mechanisms, deliberately not merged:
  *  - the STOP SLIDER is a SOFT adjustment (planConfig.dayHours[date]): it
- *    rebalances only this week - a shortfall rides onto the week's off day
- *    (the same overflow day the Backlog feature uses), a surplus is pulled
- *    off the week's last study day. `dailyHours` itself never changes.
+ *    rebalances only this week, which is re-packed around the new hours -
+ *    a shortfall rides onto the week's off day (the same overflow day the
+ *    Backlog feature uses; dropped to the Backlog tab when the plan has no
+ *    off day), a surplus leaves the week's later days lighter. `dailyHours`
+ *    itself never changes, and next week is never touched.
  *  - "Skip Day" is NOT soft: it adds today to planConfig.leaveDates through
  *    the exact same path as any other leave day, so the whole remaining plan
  *    shifts, as it would for any leave.
@@ -180,11 +183,15 @@ function TodayHoursControl() {
   const save = () => {
     if (draftValue !== plan) {
       setDayHours(today, draftValue);
-      notify(
-        draftValue < plan
-          ? `Today is ${fmtHours(draftValue)}. The difference rides onto your off day - the rest of the plan is untouched.`
-          : `Today is ${fmtHours(draftValue)}. Your week's last study day gets lighter by the same amount.`,
-      );
+      if (draftValue < plan) {
+        notify(
+          nextOffDayOnOrAfter(today, planConfig)
+            ? `Today is ${fmtHours(draftValue)}. The week reflows and the extra lectures ride onto your off day.`
+            : `Today is ${fmtHours(draftValue)}. The extra lectures drop off the plan - you'll find them in Backlog.`,
+        );
+      } else {
+        notify(`Today is ${fmtHours(draftValue)}. The rest of the week gets lighter by the same amount.`);
+      }
     } else {
       setDayHours(today, null); // back to plan = clear the override
     }
@@ -247,8 +254,9 @@ function TodayHoursControl() {
             </button>
           </div>
           <div className="tiny faint" style={{ marginTop: 8 }}>
-            The slider only rebalances this week (shortfall → off day, surplus → the
-            week's last study day). Skip Day is a real leave day - the whole plan shifts.
+            The slider only rebalances this week - the week reflows around the new
+            hours (shortfall → your off day, later days get lighter). Skip Day is a
+            real leave day - the whole plan shifts.
           </div>
         </div>
       ) : null}
