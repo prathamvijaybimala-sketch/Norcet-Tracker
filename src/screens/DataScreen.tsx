@@ -81,7 +81,7 @@ export function DataScreen() {
         <StatCard value={watched} label="Watched" />
       </div>
 
-      <div className="card" style={{ marginTop: 12 }}>
+      <div className="card quiet" style={{ marginTop: 12 }}>
         <div className="card-title">Backup</div>
         <p className="small muted" style={{ marginTop: 0 }}>
           Everything is auto-saved to this device's IndexedDB as you work (debounced ~0.4s). Export
@@ -116,7 +116,7 @@ export function DataScreen() {
         ) : null}
       </div>
 
-      <div className="card">
+      <div className="card quiet">
         <div className="card-title">Current plan</div>
         <div className="small">
           Start <b>{formatDateLong(planConfig.startDate)}</b>
@@ -142,7 +142,7 @@ export function DataScreen() {
         </div>
       </div>
 
-      <div className="card">
+      <div className="card quiet">
         <div className="card-title" style={{ color: 'var(--danger)' }}>
           Danger zone
         </div>

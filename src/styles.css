@@ -230,8 +230,6 @@ h4 {
 .side-menu-title {
   font-size: 11px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
   color: var(--text-faint);
   padding: 0 10px 8px;
 }
@@ -336,14 +334,33 @@ h4 {
   padding: 10px 12px;
 }
 
+/* Informational, not actionable - recede instead of competing for attention. */
+.card.quiet {
+  background: transparent;
+  border-color: transparent;
+  padding: 12px 2px;
+}
+
+/* Quiet cards that follow each other group a little closer. */
+.card.quiet + .card.quiet {
+  margin-top: -6px;
+}
+
+/* The one thing to act on - today's study card. Slightly more weight, not a
+   different visual language. More air around it than around the rest. */
+.study-card {
+  border-color: var(--border-strong);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  margin-bottom: 18px; /* was 12px via .card */
+}
+
 .card-title {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-weight: 600;
   color: var(--text-dim);
   margin-bottom: 10px;
 }
@@ -355,8 +372,6 @@ h4 {
 .section-title {
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--text-faint);
   margin: 18px 2px 8px;
 }
@@ -886,8 +901,6 @@ textarea {
 .table th {
   text-align: left;
   font-size: 11px;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--text-faint);
   font-weight: 700;
   padding: 6px 8px;
@@ -1204,8 +1217,6 @@ textarea {
 .stat .stat-label {
   font-size: 11px;
   color: var(--text-faint);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   font-weight: 700;
 }
 
@@ -1356,6 +1367,15 @@ textarea {
   color: var(--text-dim);
 }
 
+/* The app's one deliberate typographic accent - the same serif-italic as the
+   greeting quote, reused for the other "human warmth" moments (day complete,
+   rest / leave / off days). System fonts only: this is an offline-capable
+   native app, so no web/CDN fonts. */
+.warm-copy {
+  font-family: Georgia, 'Iowan Old Style', 'Times New Roman', serif;
+  font-style: italic;
+}
+
 .greeting.expanded .greeting-quote {
   border-top: 1px dashed var(--border);
   margin-top: 2px;
@@ -1438,8 +1458,6 @@ textarea {
 .hours-plan-mark {
   font-size: 9px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--text-faint);
 }
 
@@ -1473,8 +1491,6 @@ textarea {
   cursor: pointer;
   font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   color: var(--text-dim);
   margin-bottom: 0;
 }
@@ -1613,8 +1629,6 @@ textarea {
   min-width: 0;
   font-size: 12px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   color: var(--text-dim);
 }
 

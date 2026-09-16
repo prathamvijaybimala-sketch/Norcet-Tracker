@@ -70,11 +70,11 @@ export const LectureRow = memo(function LectureRow({
 
   const speedBadge =
     speed !== 1 ? (
-      <span className="badge accent">{formatDuration(effSec)} at {speed}×</span>
+      <span className="tiny faint">{formatDuration(effSec)} at {speed}×</span>
     ) : null;
   const dueBadge =
     showScheduledDate && scheduledDate ? (
-      <span className="badge">due {scheduledDate.slice(5)}</span>
+      <span className="tiny faint">due {scheduledDate.slice(5)}</span>
     ) : null;
 
   const context = showContext ? (

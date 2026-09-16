@@ -33,16 +33,20 @@ export function EmptyState({
   icon,
   title,
   children,
+  warm = false,
 }: {
   icon: string;
   title: string;
   children?: ReactNode;
+  /** Render the copy in the serif-italic "warm" accent (rest / leave / off
+   *  days) - same treatment as the greeting quote. */
+  warm?: boolean;
 }) {
   return (
     <div className="empty">
       <div className="empty-icon">{icon}</div>
       <div style={{ fontWeight: 650, marginBottom: 4 }}>{title}</div>
-      <div className="small">{children}</div>
+      <div className={warm ? 'small warm-copy' : 'small'}>{children}</div>
     </div>
   );
 }

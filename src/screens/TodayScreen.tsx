@@ -351,24 +351,24 @@ export function TodayScreen() {
             </div>
             <TopicSection lectureIds={day.lectureIds} showContext={false} contextDate={today} />
             {completion.allDone ? (
-              <div className="ok-box" style={{ marginTop: 14 }}>
+              <div className="ok-box warm-copy" style={{ marginTop: 14 }}>
                 Everything planned for today is watched. Nice. Tomorrow's list is already
                 generated from what is left.
               </div>
             ) : null}
           </>
         ) : day?.type === 'buffer' ? (
-          <EmptyState icon="🌿" title="Rest day (buffer)">
+          <EmptyState icon="🌿" title="Rest day (buffer)" warm>
             {day.subjectName ? `${day.subjectName} is done — ` : ''}
             today is the catch-up and rest time built into the plan before the next subject
             starts. Not an off day by mistake - it was scheduled here on purpose.
           </EmptyState>
         ) : day?.isLeaveDay ? (
-          <EmptyState icon="🏖️" title="Leave day">
+          <EmptyState icon="🏖️" title="Leave day" warm>
             Marked as time off. The plan resumes on the next available study day.
           </EmptyState>
         ) : day?.type === 'off' ? (
-          <EmptyState icon="☕" title="Not a study day">
+          <EmptyState icon="☕" title="Not a study day" warm>
             {formatDate(today)} is not one of your study days.
           </EmptyState>
         ) : (
@@ -404,7 +404,7 @@ export function TodayScreen() {
       ) : null}
 
       {missed.length > 0 ? (
-        <div className="card tight">
+        <div className="card tight quiet">
           <div className="row between wrap" style={{ gap: 10 }}>
             <div className="small">
               <b>{missed.length}</b> lecture(s) from earlier days are still unwatched (
@@ -428,7 +428,7 @@ export function TodayScreen() {
 
       {revisionDue > 0 ? (
         <button
-          className="card tight row between"
+          className="card tight row between quiet"
           onClick={() => setRoute('revision')}
           style={{ width: '100%', border: '1px solid var(--border)', textAlign: 'left' }}
         >
