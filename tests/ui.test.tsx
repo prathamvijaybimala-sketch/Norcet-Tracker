@@ -636,44 +636,99 @@ describe('plan screen', () => {
     expect(useAppStore.getState().progress).toEqual({});
   });
 
-  it('bulk-marks a subject as ALREADY done - the plan recalculates WITHOUT it', async () => {
+  // "Mark done" moved OUT of the Plan tab into the bottom row.
+  it('no longer has a Mark done tab - the feature lives in the bottom row', async () => {
     await boot();
     await importDemo();
     await openMenu();
     fireEvent.click(screen.getByRole('button', { name: /Plan/ }));
     await screen.findByText('Live preview');
-    fireEvent.click(screen.getByRole('button', { name: 'Mark done' }));
+    // No "Mark done" TAB on the Plan screen (the tab buttons are plain-text).
+    const tabButtons = [...document.querySelectorAll('.tabs button')].map((b) => b.textContent);
+    expect(tabButtons).not.toContain('Mark done');
+    expect(screen.getAllByRole('button', { name: /Mark done/ })).toHaveLength(1); // bottom nav only
+  });
+});
 
-    const before = useAppStore.getState().schedule;
-    const beforeFinish = computePlanStats(before).finishDate;
+describe('mark done screen (bottom tab)', () => {
+  it('lists only the plan subjects with progress bars; marking a topic recalculates the plan', async () => {
+    await boot();
+    await importDemo();
+    const state = () => useAppStore.getState();
 
-    fireEvent.click(await screen.findByRole('button', { name: /Mark entire subject done/ }));
-    const dialog = await screen.findByRole('dialog');
-    fireEvent.click(within(dialog).getByRole('button', { name: /Mark \d+ done/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Mark done/ }));
+    expect(await screen.findByText(/recalculates the plan without those lectures/)).toBeTruthy();
 
-    const state = useAppStore.getState();
-    const subject = state.curriculum[0];
-    const totalInSubject = subject.topics.reduce((n, t) => n + t.lectures.length, 0);
-    const watchedCount = Object.values(state.progress).filter((p) => p.lectureWatched).length;
-    expect(watchedCount).toBe(totalInSubject);
-    // Every marked lecture is flagged pre-done, with no completedDate (so it
-    // never shows in "watched today").
-    for (const t of subject.topics) {
-      for (const l of t.lectures) {
-        expect(state.progress[l.id]?.preDone).toBe(true);
-        expect(state.progress[l.id]?.completedDate).toBeNull();
-      }
+    // One row per plan subject, each with its progress bar.
+    const subjectCount = state().planConfig.subjectOrder.length;
+    expect(document.querySelectorAll('.md-subject')).toHaveLength(subjectCount);
+    expect(document.querySelectorAll('.md-subject .bar')).toHaveLength(subjectCount);
+
+    // Tap the first subject: its topics open, each with a checkbox.
+    const subject = state().curriculum.find(
+      (c) => c.id === state().planConfig.subjectOrder[0],
+    )!;
+    const topic = subject.topics[0];
+    fireEvent.click(document.querySelector('.md-subject .md-subject-head') as HTMLElement);
+    await screen.findByRole('checkbox', {
+      name: `Mark topic "${topic.name}" as already done`,
+    });
+
+    // Mark the first topic as already done: it leaves the plan entirely and
+    // the schedule recalculates without it.
+    const topicIds = new Set(topic.lectures.map((l) => l.id));
+    const before = state().schedule;
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: `Mark topic "${topic.name}" as already done` }),
+    );
+    await screen.findByText(/recalculates without them/);
+    for (const l of topic.lectures) {
+      expect(state().progress[l.id]?.preDone).toBe(true);
+      expect(state().progress[l.id]?.lectureWatched).toBe(true);
+      expect(state().progress[l.id]?.completedDate).toBeNull(); // not "watched today"
     }
-    // The plan was RECALCULATED: no day belongs to the marked subject any
-    // more, the calendar shrank, and the finish date moved earlier.
-    expect(state.schedule.some((d) => d.subjectId === subject.id)).toBe(false);
-    expect(state.schedule.length).toBeLessThan(before.length);
-    const stats = computePlanStats(state.schedule, state.progress);
-    expect(stats.remainingLectures).toBe(767 - totalInSubject);
-    if (stats.finishDate && beforeFinish) {
-      expect(stats.finishDate < beforeFinish).toBe(true);
-    }
-    expect(await screen.findByText(/recalculates without them/)).toBeTruthy();
+    expect(
+      state().schedule.every((d) => d.lectureIds.every((id) => !topicIds.has(id))),
+    ).toBe(true);
+    expect(state().schedule.length).toBeLessThanOrEqual(before.length);
+    expect(screen.queryByText(/watched today/)).toBeNull();
+
+    // The topic's checkbox is now ON and shows "put back"; tapping it returns
+    // the lectures to the plan.
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: `Put topic "${topic.name}" back into the plan` }),
+    );
+    await screen.findByText(/put back into the plan/);
+    expect(
+      state().schedule.some((d) => d.lectureIds.some((id) => topicIds.has(id))),
+    ).toBe(true);
+    expect(
+      topic.lectures.every((l) => state().progress[l.id]?.preDone !== true),
+    ).toBe(true);
+  });
+
+  it('only lists the subjects the plan includes - excluded ones disappear', async () => {
+    await boot();
+    await importDemo();
+    const state = () => useAppStore.getState();
+
+    fireEvent.click(screen.getByRole('button', { name: /Mark done/ }));
+    await screen.findByText(/recalculates the plan without those lectures/);
+    expect(document.querySelectorAll('.md-subject')).toHaveLength(state().curriculum.length);
+
+    // Exclude a subject from the plan...
+    await openMenu();
+    fireEvent.click(screen.getByRole('button', { name: /Plan/ }));
+    await screen.findByText('Live preview');
+    fireEvent.click(screen.getAllByRole('button', { name: /^Exclude / })[0]);
+    expect(state().planConfig.subjectOrder).toHaveLength(state().curriculum.length - 1);
+
+    // ...and it is gone from the Mark done list.
+    fireEvent.click(screen.getByRole('button', { name: /Mark done/ }));
+    await screen.findByText(/recalculates the plan without those lectures/);
+    expect(document.querySelectorAll('.md-subject')).toHaveLength(
+      state().curriculum.length - 1,
+    );
   });
 });
 
@@ -713,15 +768,16 @@ describe('side menu and data screen', () => {
     expect(screen.getByRole('button', { name: /Plan/ })).toBeTruthy();
     expect(screen.getByRole('button', { name: /Data/ })).toBeTruthy();
 
-    // The bottom row has exactly the four tabs, in order.
+    // The bottom row has exactly the five tabs, in order.
     const bottom = [...document.querySelectorAll('.bottom-nav button')].map(
       (b) => b.textContent,
     );
-    expect(bottom).toHaveLength(4);
+    expect(bottom).toHaveLength(5);
     expect(bottom[0]).toContain('Today');
     expect(bottom[1]).toContain('Backlog');
     expect(bottom[2]).toContain('Revision');
     expect(bottom[3]).toContain('Timeline');
+    expect(bottom[4]).toContain('Mark done');
 
     // Picking Data navigates and closes the menu.
     fireEvent.click(screen.getByRole('button', { name: /Data/ }));

@@ -6,6 +6,7 @@ import { TodayScreen } from './screens/TodayScreen';
 import { TimelineScreen } from './screens/TimelineScreen';
 import { RevisionScreen } from './screens/RevisionScreen';
 import { BacklogScreen } from './screens/BacklogScreen';
+import { MarkDoneScreen } from './screens/MarkDoneScreen';
 import { DataScreen } from './screens/DataScreen';
 import { Toast } from './components/ui';
 import { PlanLockScreen } from './components/PlanLockScreen';
@@ -21,6 +22,7 @@ const ROUTES: Route[] = [
   'subjects',
   'revision',
   'backlog',
+  'done',
   'data',
 ];
 
@@ -139,6 +141,8 @@ export default function App() {
         <RevisionScreen />
       ) : effectiveRoute === 'backlog' ? (
         <BacklogScreen />
+      ) : effectiveRoute === 'done' ? (
+        <MarkDoneScreen />
       ) : effectiveRoute === 'data' ? (
         <DataScreen />
       ) : (
@@ -194,6 +198,7 @@ export default function App() {
             badge={revisionDue}
           />
           <NavButton route="timeline" label="Timeline" icon="▦" active={effectiveRoute} onClick={setRoute} />
+          <NavButton route="done" label="Mark done" icon="✔" active={effectiveRoute} onClick={setRoute} />
         </nav>
       ) : null}
 

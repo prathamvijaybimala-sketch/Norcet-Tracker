@@ -292,6 +292,7 @@ h4 {
   font-weight: 600;
   padding: 6px 2px;
   position: relative;
+  white-space: nowrap; /* five tabs: labels must not wrap */
 }
 
 .bottom-nav button.active {
@@ -1718,4 +1719,101 @@ textarea {
 
 .topic-head .check {
   flex: 0 0 auto;
+}
+
+/* ------------------------------- mark done screen ---------------------- */
+
+.md-subject {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.md-subject:last-child {
+  border-bottom: 0;
+}
+
+.md-subject-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: var(--text);
+  text-align: left;
+}
+
+.md-chev {
+  flex: 0 0 auto;
+  width: 14px;
+  color: var(--text-faint);
+}
+
+.md-subject-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.md-topics {
+  padding: 2px 0 2px 22px;
+  display: flex;
+  flex-direction: column;
+}
+
+.md-topic {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid var(--border);
+}
+
+.md-topic:last-of-type {
+  border-bottom: 0;
+}
+
+.md-topic input[type='checkbox'] {
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1.5px solid var(--border-strong);
+  background: var(--bg-input);
+  display: grid;
+  place-items: center;
+  margin: 0;
+  flex: 0 0 auto;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.md-topic input[type='checkbox']:checked {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+.md-topic input[type='checkbox']:checked::after {
+  content: '';
+  width: 5px;
+  height: 9px;
+  border: solid #08120d;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) translateY(-1px);
+}
+
+.md-topic-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.md-topic.on .md-topic-name {
+  color: var(--text);
 }

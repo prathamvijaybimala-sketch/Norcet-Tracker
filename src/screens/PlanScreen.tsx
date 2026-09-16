@@ -2,15 +2,13 @@ import { useState } from 'react';
 import { useAppStore } from '../store/appStore';
 import { SubjectOrderList } from '../components/SubjectOrderList';
 import { PaceControls } from '../components/PaceControls';
-import { BulkMarkPanel } from '../components/BulkMarkPanel';
 import { LeaveManager } from '../components/LeaveManager';
 import { MIN_LOCK_LENGTH } from '../lib/lock';
 
-type Tab = 'order' | 'bulk' | 'leave';
+type Tab = 'order' | 'leave';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'order', label: 'Order & pace' },
-  { id: 'bulk', label: 'Mark done' },
   { id: 'leave', label: 'Leave days' },
 ];
 
@@ -34,7 +32,6 @@ export function PlanScreen() {
           <LockCard />
         </>
       ) : null}
-      {tab === 'bulk' ? <BulkMarkPanel /> : null}
       {tab === 'leave' ? <LeaveManager /> : null}
     </div>
   );

@@ -56,7 +56,7 @@ export type MarkFlags = {
   questionsDone?: boolean;
 };
 
-export type Route = 'import' | 'setup' | 'today' | 'timeline' | 'subjects' | 'revision' | 'backlog' | 'data';
+export type Route = 'import' | 'setup' | 'today' | 'timeline' | 'subjects' | 'revision' | 'backlog' | 'done' | 'data';
 
 type Derived = {
   lectureIndex: Map<string, LectureRef>;

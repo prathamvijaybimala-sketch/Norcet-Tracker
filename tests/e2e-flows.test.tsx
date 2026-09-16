@@ -711,7 +711,7 @@ describe('data tab flows', () => {
 /* ================================= General ================================== */
 
 describe('general', () => {
-  it('walks all six routes with the full demo loaded and produces no console errors', async () => {
+  it('walks all seven routes with the full demo loaded and produces no console errors', async () => {
     const { unmount } = await launchWithDemo();
     const errors: string[] = [];
     const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
@@ -726,6 +726,8 @@ describe('general', () => {
     expect((await screen.findAllByText(/Nothing due|Due for revision|Coming up/)).length).toBeGreaterThan(0);
     fireEvent.click(bottomNav().getByRole('button', { name: /Timeline/ }));
     await screen.findByText(/January 2027/);
+    fireEvent.click(bottomNav().getByRole('button', { name: /Mark done/ }));
+    await screen.findByText(/recalculates the plan without those lectures/);
     await openMenuThen(/Plan/);
     await screen.findByText('Live preview');
     await openMenuThen(/Data/);
@@ -751,11 +753,8 @@ describe('general', () => {
     const dayCells = document.querySelectorAll('.day-cell:not(.blank)').length;
     expect(dayCells).toBe(state().schedule.length);
 
-    // Bulk panel: the biggest subject (79+ lectures) renders, paginates and
-    // bulk-marks without losing rows.
-    await openMenuThen(/Plan/);
-    await screen.findByText('Live preview');
-    fireEvent.click(screen.getByRole('button', { name: 'Mark done' }));
+    // Mark done tab: the biggest subject (79+ lectures) lists all of its
+    // topics at once (no pagination) and bulk-marks without losing rows.
     const biggest = [...state().curriculum].sort(
       (a, b) =>
         b.topics.reduce((n, t) => n + t.lectures.length, 0) -
@@ -763,33 +762,24 @@ describe('general', () => {
     )[0];
     const biggestCount = biggest.topics.reduce((n, t) => n + t.lectures.length, 0);
     expect(biggestCount).toBeGreaterThanOrEqual(79);
-    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: biggest.id } });
 
-    // The tree is collapsed by default, and the panel opens ONE topic at a
-    // time ("Show more" pages 60 rows at a time, per subject). Walk every
-    // topic, following its pagination, and count what is reachable.
-    const headers = [...document.querySelectorAll('.tree-topic > button')];
-    expect(headers.length).toBe(biggest.topics.length);
-    const rowsIn = (h: Element) =>
-      h.closest('.tree-topic')!.querySelectorAll('.tree-body .lecture-pick').length;
-    let shownTotal = 0;
-    for (const h of headers) {
-      fireEvent.click(h as HTMLElement); // opens this topic, closes the previous
-      await waitFor(() => expect(rowsIn(h)).toBeGreaterThan(0));
-      let guard = 0;
-      while (screen.queryByRole('button', { name: /Show \d+ more/ }) && guard++ < 40) {
-        fireEvent.click(screen.getByRole('button', { name: /Show \d+ more/ }));
-      }
-      shownTotal += rowsIn(h);
-    }
-    expect(shownTotal).toBe(biggestCount); // every lecture reachable, none lost
+    fireEvent.click(bottomNav().getByRole('button', { name: /Mark done/ }));
+    await screen.findByText(/recalculates the plan without those lectures/);
+    expect(document.querySelectorAll('.md-subject')).toHaveLength(state().planConfig.subjectOrder.length);
 
-    // Bulk-mark the whole subject through the confirm modal.
-    fireEvent.click(screen.getByRole('button', { name: /Mark entire subject done/ }));
+    // Open the biggest subject (rows are in plan order)...
+    const idx = state().planConfig.subjectOrder.indexOf(biggest.id);
+    fireEvent.click(document.querySelectorAll('.md-subject .md-subject-head')[idx] as HTMLElement);
+    // ...every one of its topics is visible at once, none lost.
+    const topicRows = document.querySelectorAll('.md-topics .md-topic');
+    expect(topicRows.length).toBe(biggest.topics.length);
+
+    // Mark the whole subject through the confirm modal.
+    fireEvent.click(screen.getByRole('button', { name: /Mark whole subject done/ }));
     fireEvent.click(
       await screen.findByRole('button', { name: new RegExp(`Mark ${biggestCount} done`) }),
     );
-    await waitFor(() => expect(screen.getByText(`${biggestCount}/${biggestCount} watched`)).toBeTruthy());
+    await screen.findByText(`${biggestCount}/${biggestCount}`); // progress bar full
     for (const t of biggest.topics) {
       for (const l of t.lectures) {
         expect(state().progress[l.id]?.lectureWatched).toBe(true);
