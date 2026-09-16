@@ -49,9 +49,13 @@ export default function App() {
 
   const [menuOpen, setMenuOpen] = useState(false);
 
-  // Reflect the theme on <html> (CSS variables swap per [data-theme]).
+  // Reflect the theme on <html> (CSS variables swap per [data-theme]) and
+  // on the status-bar meta so Android's bar follows light/dark.
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute('content', theme === 'dark' ? '#0d1014' : '#f3f5f9');
   }, [theme]);
 
   useEffect(() => {

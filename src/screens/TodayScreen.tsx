@@ -2,7 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { useAppStore } from '../store/appStore';
 import { TopicSection } from '../components/TopicSection';
 import { Modal, ProgressBar, EmptyState } from '../components/ui';
-import { completedOnDate, computeTodayStats, dayCompletion } from '../lib/stats';
+import { completedOnDate, computeTodayStats, dayCompletion, missedLectures } from '../lib/stats';
 import { dayOfYear, formatDate, todayISO } from '../lib/dates';
 import { formatDuration } from '../lib/duration';
 import { STUDY_QUOTES } from '../lib/quotes';
@@ -294,6 +294,22 @@ export function TodayScreen() {
   // instead of letting them disappear.
   const doneToday = useMemo(() => completedOnDate(progress, today), [progress, today]);
 
+  // ONE "missed" definition for the banner and the Backlog tab/badge: past
+  // scheduled days plus lectures that dropped off the plan entirely.
+  const missed = useMemo(
+    () => missedLectures(schedule, lectureIndex, planConfig.subjectOrder, progress, today),
+    [schedule, lectureIndex, planConfig.subjectOrder, progress, today],
+  );
+  const missedSec = useMemo(
+    () =>
+      missed.reduce(
+        (n, { id }) => n + (lectureIndex.get(id)?.lecture.durationSec ?? 0) /
+          (planConfig.playbackSpeed > 0 ? planConfig.playbackSpeed : 1),
+        0,
+      ),
+    [missed, lectureIndex, planConfig.playbackSpeed],
+  );
+
   const doneTodaySec = useMemo(
     () =>
       doneToday.reduce((n, id) => n + (lectureIndex.get(id)?.lecture.durationSec ?? 0), 0) /
@@ -387,12 +403,12 @@ export function TodayScreen() {
         </div>
       ) : null}
 
-      {stats.backlogLectures > 0 ? (
+      {missed.length > 0 ? (
         <div className="card tight">
           <div className="row between wrap" style={{ gap: 10 }}>
             <div className="small">
-              <b>{stats.backlogLectures}</b> lecture(s) from earlier days are still unwatched (
-              {formatDuration(stats.backlogSec)}).
+              <b>{missed.length}</b> lecture(s) from earlier days are still unwatched (
+              {formatDuration(missedSec)}).
             </div>
             <div className="row" style={{ gap: 6 }}>
               <button className="btn sm" onClick={catchUp}>

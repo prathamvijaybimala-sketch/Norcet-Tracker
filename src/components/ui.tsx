@@ -47,24 +47,6 @@ export function EmptyState({
   );
 }
 
-export function Field({
-  label,
-  children,
-  hint,
-}: {
-  label: string;
-  children: ReactNode;
-  hint?: string;
-}) {
-  return (
-    <div className="field">
-      <label>{label}</label>
-      {children}
-      {hint ? <div className="tiny faint">{hint}</div> : null}
-    </div>
-  );
-}
-
 export function Modal({
   title,
   onClose,
@@ -117,57 +99,5 @@ export function Toast({
     <div className="toast" role="status" onClick={onDismiss}>
       {message}
     </div>
-  );
-}
-
-/** Number input that keeps its own text state so typing "1." doesn't fight the parent. */
-export function NumberInput({
-  value,
-  onChange,
-  min = 0,
-  max = 999,
-  step = 1,
-  suffix,
-}: {
-  value: number;
-  onChange: (value: number) => void;
-  min?: number;
-  max?: number;
-  step?: number;
-  suffix?: string;
-}) {
-  return (
-    <div className="row" style={{ gap: 6 }}>
-      <input
-        type="number"
-        value={Number.isFinite(value) ? value : ''}
-        min={min}
-        max={max}
-        step={step}
-        onChange={(e) => {
-          const n = Number(e.target.value);
-          if (!Number.isFinite(n)) return;
-          onChange(Math.max(min, Math.min(max, n)));
-        }}
-      />
-      {suffix ? <span className="tiny faint">{suffix}</span> : null}
-    </div>
-  );
-}
-
-export function Toggle({
-  checked,
-  onChange,
-  label,
-}: {
-  checked: boolean;
-  onChange: (next: boolean) => void;
-  label: string;
-}) {
-  return (
-    <label className={`check ${checked ? 'on' : ''}`}>
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      <span className="check-label">{label}</span>
-    </label>
   );
 }

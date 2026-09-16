@@ -7,6 +7,7 @@ import {
   dateRange,
   diffDays,
   formatDate,
+  isISODate,
   monthKey,
   parseISODate,
   todayISO,
@@ -24,6 +25,7 @@ export function LeaveManager() {
   const toggleLeave = useAppStore((s) => s.toggleLeave);
   const addLeaveDates = useAppStore((s) => s.addLeaveDates);
   const removeLeaveDate = useAppStore((s) => s.removeLeaveDate);
+  const updatePlan = useAppStore((s) => s.updatePlan);
   const notify = useAppStore((s) => s.notify);
 
   const today = todayISO();
@@ -58,6 +60,12 @@ export function LeaveManager() {
   };
 
   const addRange = () => {
+    // A cleared date input delivers "" - without this check the range loop
+    // would run to its safety cap and inject thousands of NaN-dates.
+    if (!isISODate(rangeStart) || !isISODate(rangeEnd)) {
+      notify('Pick a valid From and To date first.');
+      return;
+    }
     if (diffDays(rangeStart, rangeEnd) < 0) {
       notify('The range end is before the start.');
       return;
@@ -155,9 +163,9 @@ export function LeaveManager() {
           {leaveDates.length ? (
             <button
               className="btn sm ghost"
-              onClick={() => {
-                for (const d of leaveDates) removeLeaveDate(d);
-              }}
+              // One update, not N: each removeLeaveDate would re-derive the
+              // schedule and schedule its own save.
+              onClick={() => updatePlan({ leaveDates: [] })}
             >
               Clear all
             </button>

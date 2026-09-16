@@ -11,10 +11,12 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import App from '../src/App';
 import { useAppStore } from '../src/store/appStore';
-import { addDays, dayOfYear, todayISO } from '../src/lib/dates';
+import { addDays, dayOfYear, isISODate, todayISO } from '../src/lib/dates';
 import { nextOffDayOnOrAfter } from '../src/lib/schedule';
 import { computePlanStats } from '../src/lib/stats';
 import { STUDY_QUOTES } from '../src/lib/quotes';
+import { makeSubjects, hours } from './helpers';
+import type { PlanConfig } from '../src/types';
 
 const demo = readFileSync(resolve(__dirname, '../public/demo-curriculum.json'), 'utf8');
 
@@ -63,6 +65,34 @@ describe('import screen', () => {
     expect(await screen.findByText('Preview')).toBeTruthy();
     expect(screen.getByText('Test Subject')).toBeTruthy();
     expect(screen.getByText('1.0')).toBeTruthy(); // hours
+  });
+
+  it('re-importing a different curriculum prunes stale progress and revision', async () => {
+    await boot();
+    await importDemo();
+    const state = useAppStore.getState();
+    const id = state.schedule[0].lectureIds[0];
+    // Fully done -> also enters the revision queue (3 days out).
+    state.setFlags(id, { lectureWatched: true, notesDone: true, questionsDone: true });
+    expect(Object.keys(useAppStore.getState().revision)).toHaveLength(1);
+
+    // A completely different curriculum: none of the old lecture ids exist.
+    const other = JSON.stringify({
+      'Brand New Subject': {
+        instructor: 'Dr Y',
+        topics: [{ topic: 'T1', subtopics: [{ name: 'L1', duration: '01:00:00' }] }],
+      },
+    });
+    useAppStore.getState().importCurriculum(other);
+
+    const after = useAppStore.getState();
+    expect(after.curriculum).toHaveLength(1);
+    const freshIds = new Set<string>();
+    for (const sub of after.curriculum)
+      for (const t of sub.topics) for (const l of t.lectures) freshIds.add(l.id);
+    // Orphaned progress / revision entries must be gone (persisted + exported).
+    expect(Object.keys(after.progress).every((k) => freshIds.has(k))).toBe(true);
+    expect(Object.keys(after.revision).every((k) => freshIds.has(k))).toBe(true);
   });
 });
 
@@ -422,6 +452,46 @@ describe('plan screen', () => {
     await waitFor(() => expect(useAppStore.getState().schedule.length).toBeLessThan(before));
   });
 
+  it('survives a cleared start date and clamps out-of-range pace values', async () => {
+    await boot();
+    await importDemo();
+    await openMenu();
+    fireEvent.click(screen.getByRole('button', { name: /Plan/ }));
+    await screen.findByText('Live preview');
+
+    const startBefore = useAppStore.getState().planConfig.startDate;
+    const daysBefore = useAppStore.getState().schedule.length;
+    // Clearing the date field delivers "" - the plan must stay intact
+    // (this used to persist a garbage date and empty the whole schedule).
+    fireEvent.change(screen.getByLabelText('Start date'), { target: { value: '' } });
+    expect(useAppStore.getState().planConfig.startDate).toBe(startBefore);
+    expect(useAppStore.getState().schedule.length).toBe(daysBefore);
+
+    // HTML max= is decorative: typed "99" must be clamped at the store.
+    fireEvent.change(screen.getByLabelText('Daily hours'), { target: { value: '99' } });
+    await waitFor(() => expect(useAppStore.getState().planConfig.dailyHours).toBe(16));
+    fireEvent.change(screen.getByLabelText('Playback speed'), { target: { value: '99' } });
+    await waitFor(() => expect(useAppStore.getState().planConfig.playbackSpeed).toBe(4));
+    // A clamped plan still generates days.
+    expect(useAppStore.getState().schedule.length).toBeGreaterThan(0);
+  });
+
+  it('refuses a leave range with a cleared date instead of injecting junk', async () => {
+    await boot();
+    await importDemo();
+    await openMenu();
+    fireEvent.click(screen.getByRole('button', { name: /Plan/ }));
+    await screen.findByText('Live preview');
+    fireEvent.click(screen.getByRole('button', { name: 'Leave days' }));
+
+    // Clear the "From" date and submit - this used to loop dateRange to its
+    // 20,000-iteration cap and flood leaveDates with NaN-dates.
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add range as leave' }));
+    expect(useAppStore.getState().planConfig.leaveDates).toEqual([]);
+    expect(await screen.findByText('Pick a valid From and To date first.')).toBeTruthy();
+  });
+
   it('supports excluding a subject and reordering', async () => {
     await boot();
     await importDemo();
@@ -552,6 +622,36 @@ describe('side menu and data screen', () => {
     URL.createObjectURL = origCreate;
     URL.revokeObjectURL = origRevoke;
     clickSpy.mockRestore();
+  });
+
+  it('restoring a hand-edited backup normalizes the plan config', async () => {
+    await boot();
+    const subject = makeSubjects([hours('Survivor Subject', 1, 1, 1, 1)])[0];
+    // Missing fields, negative hours, empty study days, impossible date and a
+    // junk leave date - exactly what a hand-edited export file can carry.
+    useAppStore.getState().applyBackup({
+      curriculum: [subject],
+      planConfig: {
+        subjectOrder: [subject.id],
+        dailyHours: -5,
+        studyDays: [],
+        playbackSpeed: 0,
+        startDate: '2026-13-40',
+        leaveDates: ['2026-09-20', 'not-a-date'],
+      } as unknown as PlanConfig,
+      progress: {},
+      revision: {},
+    });
+
+    const cfg = useAppStore.getState().planConfig;
+    expect(isISODate(cfg.startDate)).toBe(true);
+    expect(cfg.dailyHours).toBe(3);
+    expect(cfg.playbackSpeed).toBe(1.5);
+    expect(cfg.studyDays).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(cfg.leaveDates).toEqual(['2026-09-20']);
+    // The repaired plan actually generates days.
+    expect(useAppStore.getState().schedule.length).toBeGreaterThan(0);
+    expect(useAppStore.getState().route).toBe('today');
   });
 });
 

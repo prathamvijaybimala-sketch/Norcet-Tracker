@@ -4,7 +4,7 @@
  */
 
 import type { PlanConfig, ProgressStore, ScheduleDay, Subject } from '../types';
-import { diffDays, maxISO, todayISO } from './dates';
+import { diffDays, todayISO } from './dates';
 import type { LectureRef } from './parseCurriculum';
 
 export type MissedLecture = { id: string; date: string };
@@ -293,20 +293,9 @@ export function dayStatus(
   return done > 0 ? 'partial' : 'upcoming';
 }
 
-/** First date on which anything is scheduled (useful when start date is an off day). */
-export function firstStudyDate(schedule: ScheduleDay[]): string | null {
-  for (const day of schedule) if (day.type === 'study') return day.date;
-  return null;
-}
-
 /** Days from today until the plan's finish date (negative once past it). */
 export function daysUntil(date: string | null, today: string): number | null {
   if (!date) return null;
   return diffDays(today, date);
 }
 
-export function laterISO(a: string | null, b: string | null): string | null {
-  if (!a) return b;
-  if (!b) return a;
-  return maxISO(a, b);
-}

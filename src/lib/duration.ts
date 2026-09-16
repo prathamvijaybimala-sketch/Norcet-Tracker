@@ -70,8 +70,13 @@ export function formatClock(totalSec: number): string {
 /** Human friendly length, e.g. `formatDuration(5491) -> "1h 32m"`. */
 export function formatDuration(totalSec: number): string {
   const sec = Math.max(0, Math.round(totalSec));
-  const h = Math.floor(sec / 3600);
-  const m = Math.round((sec % 3600) / 60);
+  let h = Math.floor(sec / 3600);
+  let m = Math.round((sec % 3600) / 60);
+  if (m === 60) {
+    // 59m30s rounds to 60m - carry it up instead of printing "60m".
+    h += 1;
+    m = 0;
+  }
   if (h === 0) return `${m}m`;
   if (m === 0) return `${h}h`;
   return `${h}h ${m}m`;

@@ -94,6 +94,9 @@ export function monthKey(iso: string): string {
 /** All `YYYY-MM-DD` dates from `start` to `end` inclusive. */
 export function dateRange(start: string, end: string): string[] {
   const out: string[] = [];
+  // Invalid input (e.g. a cleared date field yields "") would otherwise loop
+  // to the safety cap below and return thousands of NaN-dates.
+  if (!isISODate(start) || !isISODate(end)) return out;
   if (diffDays(start, end) < 0) return out;
   let cursor = start;
   // Guard against pathological input; a 20 year plan is still only ~7300 days.

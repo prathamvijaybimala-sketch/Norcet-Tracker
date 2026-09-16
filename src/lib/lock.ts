@@ -42,18 +42,45 @@ function fnvStretchHex(input: string): string {
   return out;
 }
 
-/** Hash a password for storage. Always resolves (never throws). */
+/**
+ * Hash a password for storage. Always resolves (never throws).
+ *
+ * The stored value is TAGGED with the algorithm that produced it
+ * (`s:` = SHA-256, `f:` = FNV fallback): the available algorithm is
+ * environment-dependent, and comparing a SHA-256 hash against an FNV hash
+ * would silently say "wrong password". Legacy untagged hashes (from before
+ * the tag) are still accepted when verifying, so existing locks keep
+ * working on the same device.
+ */
 export async function hashPlanPassword(password: string): Promise<string> {
   const hex = await sha256Hex(`${SALT}:${password}`);
-  return hex ?? fnvStretchHex(`${SALT}:${password}`);
+  return hex ? `s:${hex}` : `f:${fnvStretchHex(`${SALT}:${password}`)}`;
 }
 
-/** Constant-time-ish comparison (timing does not matter here, but be tidy). */
-export function sameHash(a: string, b: string): boolean {
+function constantTimeEquals(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
+}
+
+/**
+ * Compare a stored hash with a freshly computed one. Tolerates legacy
+ * untagged stored values (compared as raw digests on the same device, where
+ * the algorithm is the same one that created them).
+ */
+export function sameHash(stored: string, candidate: string): boolean {
+  const cIdx = candidate.indexOf(':');
+  const cAlg = cIdx === 1 ? candidate.slice(0, 1) : '';
+  const cDigest = cIdx === 1 ? candidate.slice(2) : candidate;
+
+  const sIdx = stored.indexOf(':');
+  const sAlg = sIdx === 1 ? stored.slice(0, 1) : '';
+  const sDigest = sIdx === 1 ? stored.slice(2) : stored;
+
+  if (sAlg) return sAlg === cAlg && constantTimeEquals(sDigest, cDigest);
+  // Legacy untagged stored hash: same device, same algorithm as at set-time.
+  return constantTimeEquals(sDigest, cDigest);
 }
 
 /** Minimum length enforced when setting / changing the lock. */

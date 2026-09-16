@@ -8,14 +8,23 @@
  *  - it never consumes "daily hours" and never appears in generateSchedule.
  */
 
-import type { ProgressStore, RevisionItem, RevisionStore } from '../types';
+import type { LectureProgress, ProgressStore, RevisionItem, RevisionStore } from '../types';
 import { addDays, todayISO } from './dates';
 
 export const DEFAULT_REVISION_INTERVALS = [3, 14, 30];
 
+function isEligible(p: LectureProgress | undefined): boolean {
+  return Boolean(p && p.lectureWatched && p.notesDone && p.questionsDone);
+}
+
 /**
- * A lecture becomes revision-eligible once lecture + notes + questions are all
- * done. Returns a NEW store when something changed, or the SAME reference when
+ * A lecture becomes revision-eligible once lecture + notes + questions are
+ * all done, and STAYS eligible only while all three boxes remain ticked:
+ * un-ticking any box (or the lecture's progress entry vanishing, e.g. after a
+ * curriculum re-import) removes it from the queue again. Without this, a
+ * single un-tick would leave a lecture "due" forever.
+ *
+ * Returns a NEW store when something changed, or the SAME reference when
  * nothing did (so callers can skip writes).
  */
 export function syncRevisionQueue(
@@ -23,14 +32,15 @@ export function syncRevisionQueue(
   revision: RevisionStore,
   intervals: number[],
   today: string = todayISO(),
-): { revision: RevisionStore; added: number } {
+): { revision: RevisionStore; added: number; removed: number } {
   const list = intervals.length ? intervals : DEFAULT_REVISION_INTERVALS;
   const first = Math.max(1, Math.round(list[0]));
   let next: RevisionStore | null = null;
   let added = 0;
+  let removed = 0;
 
   for (const [lectureId, p] of Object.entries(progress)) {
-    if (!p.lectureWatched || !p.notesDone || !p.questionsDone) continue;
+    if (!isEligible(p)) continue;
     if (revision[lectureId]) continue;
     if (!next) next = { ...revision };
     next[lectureId] = {
@@ -42,7 +52,16 @@ export function syncRevisionQueue(
     added++;
   }
 
-  return { revision: next ?? revision, added };
+  // Prune items that are no longer eligible (a box was un-ticked) or orphaned
+  // (no progress entry any more).
+  for (const [lectureId] of Object.entries(revision)) {
+    if (isEligible(progress[lectureId])) continue;
+    if (!next) next = { ...revision };
+    delete next[lectureId];
+    removed++;
+  }
+
+  return { revision: next ?? revision, added, removed };
 }
 
 /**

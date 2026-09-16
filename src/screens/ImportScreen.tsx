@@ -21,6 +21,9 @@ export function ImportScreen() {
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
+  /** The exact raw string the current preview was built from (not the live
+   *  textarea - it may have been edited since parsing). */
+  const [parsedRaw, setParsedRaw] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [loadingDemo, setLoadingDemo] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -35,8 +38,10 @@ export function ImportScreen() {
     try {
       const { subjects, warnings, lectureCount, totalSec } = parseCurriculumDetailed(raw);
       setPreview({ subjects, warnings, lectures: lectureCount, totalSec });
+      setParsedRaw(raw);
       setText((current) => (current === raw ? current : raw));
     } catch (err) {
+      setParsedRaw(null);
       setPreview(null);
       setError(err instanceof CurriculumParseError ? err.message : `Could not read that file: ${String(err)}`);
     }
@@ -53,9 +58,10 @@ export function ImportScreen() {
   };
 
   const commit = () => {
-    if (!preview) return;
-    const raw = text;
-    const result = importCurriculum(raw);
+    if (!preview || parsedRaw === null) return;
+    // Import the exact string that was previewed - the textarea may have
+    // drifted since (and would then have cleared the preview anyway).
+    const result = importCurriculum(parsedRaw);
     setPreview(null);
     setText('');
     setConfirming(false);
@@ -116,7 +122,16 @@ export function ImportScreen() {
             <textarea
               value={text}
               placeholder='{ "Anatomy and Physiology": { "instructor": "…", "topics": [ … ] } }'
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => {
+                setText(e.target.value);
+                // Editing invalidates the preview: confirm must match what
+                // the user actually looked at.
+                if (parsedRaw !== null) {
+                  setParsedRaw(null);
+                  setPreview(null);
+                  setError(null);
+                }
+              }}
               onBlur={() => text.trim() && buildPreview(text)}
             />
           </div>

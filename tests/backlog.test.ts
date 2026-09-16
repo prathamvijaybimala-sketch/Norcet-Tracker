@@ -5,7 +5,7 @@ import {
   nextStudyDateOnOrAfter,
 } from '../src/lib/schedule';
 import { makePlan, makeSubjects, hours } from './helpers';
-import { weekdayOf } from '../src/lib/dates';
+import { dateRange, weekdayOf } from '../src/lib/dates';
 import type { PlanConfig, ScheduleDay } from '../src/types';
 
 const START = '2026-09-15'; // a Tuesday
@@ -44,6 +44,16 @@ describe('date helpers', () => {
     expect(nextStudyDateOnOrAfter('2026-09-20', cfg)).toBe('2026-09-21');
     const withLeave = { ...cfg, leaveDates: ['2026-09-21'] };
     expect(nextStudyDateOnOrAfter('2026-09-21', withLeave)).toBe('2026-09-22');
+  });
+
+  it('dateRange rejects invalid endpoints instead of looping to the cap', () => {
+    // A cleared date input yields "" - this used to run 20,000 iterations and
+    // return thousands of NaN-dates, which then became "leave days".
+    expect(dateRange('', '2026-09-20')).toEqual([]);
+    expect(dateRange('2026-09-15', '')).toEqual([]);
+    expect(dateRange('not-a-date', '2026-09-20')).toEqual([]);
+    // Valid input still works.
+    expect(dateRange('2026-09-18', '2026-09-20')).toEqual(['2026-09-18', '2026-09-19', '2026-09-20']);
   });
 });
 

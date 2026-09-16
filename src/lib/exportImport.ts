@@ -7,8 +7,8 @@
  */
 
 import type { ExportPayload, PlanConfig, ProgressStore, RevisionStore, Subject } from '../types';
+import { isISODate, todayISO } from './dates';
 import { DEFAULT_REVISION_INTERVALS } from './revision';
-import { isISODate } from './dates';
 
 export const APP_VERSION = '1.0.0';
 export const EXPORT_FILE_PREFIX = 'norcet-tracker-backup';
@@ -125,32 +125,62 @@ export function validateExportPayload(raw: unknown): { ok: true; payload: Export
   };
 }
 
-/** Fill in fields added after a backup was taken so old exports still load. */
+/**
+ * Fill in / repair fields so old exports, hand-edited files and partially
+ * valid payloads still load. Every field falls back to a safe default rather
+ * than trusting a cast: an invalid start date or a missing study-day list
+ * would otherwise corrupt the generated plan (see PaceControls' cleared
+ * start-date bug).
+ */
 export function normalizePlanConfig(plan: Record<string, unknown>): PlanConfig {
+  const subjectOrder = Array.isArray(plan.subjectOrder)
+    ? (plan.subjectOrder as unknown[]).filter((id): id is string => typeof id === 'string')
+    : [];
+  const dailyHours =
+    typeof plan.dailyHours === 'number' && Number.isFinite(plan.dailyHours) && plan.dailyHours > 0
+      ? plan.dailyHours
+      : 3;
+  const studyDays = Array.isArray(plan.studyDays)
+    ? (plan.studyDays as unknown[])
+        .filter((d): d is number => typeof d === 'number' && Number.isInteger(d) && d >= 0 && d <= 6)
+        .sort((a, b) => a - b)
+    : [];
+  const playbackSpeed =
+    typeof plan.playbackSpeed === 'number' && Number.isFinite(plan.playbackSpeed) && plan.playbackSpeed > 0
+      ? plan.playbackSpeed
+      : 1.5;
+  const bufferDaysBySubject: Record<string, number> = {};
+  if (isObject(plan.bufferDaysBySubject)) {
+    for (const [k, v] of Object.entries(plan.bufferDaysBySubject)) {
+      if (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 60) bufferDaysBySubject[k] = Math.round(v);
+    }
+  }
+  const revisionIntervals = Array.isArray(plan.revisionIntervals)
+    ? (plan.revisionIntervals as unknown[]).filter(
+        (n): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 1,
+      )
+    : [];
   return {
-    subjectOrder: plan.subjectOrder as string[],
-    dailyHours: plan.dailyHours as number,
-    studyDays: plan.studyDays as number[],
-    playbackSpeed: plan.playbackSpeed as number,
-    bufferDaysBySubject: (plan.bufferDaysBySubject ?? {}) as Record<string, number>,
-    leaveDates: ((plan.leaveDates ?? []) as unknown[]).filter((d): d is string => typeof d === 'string'),
-    startDate: plan.startDate as string,
+    subjectOrder,
+    dailyHours,
+    studyDays: studyDays.length ? studyDays : [1, 2, 3, 4, 5, 6],
+    playbackSpeed,
+    bufferDaysBySubject,
+    leaveDates: ((plan.leaveDates ?? []) as unknown[]).filter((d): d is string => isISODate(d)),
+    startDate: isISODate(plan.startDate) ? plan.startDate : todayISO(),
     bufferCountsOffDays: plan.bufferCountsOffDays !== false,
-    revisionIntervals:
-      Array.isArray(plan.revisionIntervals) && plan.revisionIntervals.length
-        ? (plan.revisionIntervals as number[])
-        : [...DEFAULT_REVISION_INTERVALS],
+    revisionIntervals: revisionIntervals.length ? revisionIntervals : [...DEFAULT_REVISION_INTERVALS],
     studentName: typeof plan.studentName === 'string' ? plan.studentName : '',
     offDayLectures: isObject(plan.offDayLectures)
       ? (Object.fromEntries(
-          Object.entries(plan.offDayLectures).filter(([, v]) => typeof v === 'string'),
+          Object.entries(plan.offDayLectures).filter(([, v]) => isISODate(v)),
         ) as Record<string, string>)
       : {},
-    backlogAnchor: typeof plan.backlogAnchor === 'string' ? plan.backlogAnchor : null,
+    backlogAnchor: isISODate(plan.backlogAnchor) ? (plan.backlogAnchor as string) : null,
     dayHours: isObject(plan.dayHours)
       ? (Object.fromEntries(
           Object.entries(plan.dayHours).filter(
-            ([, v]) => typeof v === 'number' && Number.isFinite(v) && v >= 1 && v <= 16,
+            ([k, v]) => isISODate(k) && typeof v === 'number' && Number.isFinite(v) && v >= 1 && v <= 16,
           ),
         ) as Record<string, number>)
       : {},

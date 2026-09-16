@@ -14,6 +14,7 @@ export function DataScreen() {
   const progress = useAppStore((s) => s.progress);
   const revision = useAppStore((s) => s.revision);
   const schedule = useAppStore((s) => s.schedule);
+  const lectureIndex = useAppStore((s) => s.lectureIndex);
   const exportData = useAppStore((s) => s.exportData);
   const applyBackup = useAppStore((s) => s.applyBackup);
   const resetEverything = useAppStore((s) => s.resetEverything);
@@ -36,7 +37,11 @@ export function DataScreen() {
     lectures += s.lectureCount;
     hours += s.totalSec;
   }
-  const watched = Object.values(progress).filter((p) => p.lectureWatched).length;
+  // Only count lectures that still exist in the current curriculum, so a
+  // stale progress entry can never inflate the number past the lecture count.
+  const watched = Object.entries(progress).filter(
+    ([id, p]) => p.lectureWatched && lectureIndex.has(id),
+  ).length;
 
   const onFile = async (file: File | undefined) => {
     if (!file) return;
@@ -214,17 +219,17 @@ export function DataScreen() {
 
 function ImportSummary({ payload }: { payload: ExportPayload }) {
   const s = payloadSummary(payload);
-  const current = useAppStore((st) => ({
-    subjects: st.curriculum.length,
-    progress: Object.keys(st.progress).length,
-  }));
+  // Primitive selectors: an object-returning selector re-renders on every
+  // store change (and is a crash under zustand v5).
+  const subjects = useAppStore((st) => st.curriculum.length);
+  const progressCount = useAppStore((st) => Object.keys(st.progress).length);
   return (
     <div className="stack">
       <div className="small">
         This will restore progress for <b>{s.watched}</b> completed lecture
         {s.watched === 1 ? '' : 's'} across <b>{s.subjects}</b> subject
         {s.subjects === 1 ? '' : 's'} ({s.lectures} lectures, {s.revisionItems} revision items),
-        overwriting the {current.subjects} subject(s) and {current.progress} progress record(s)
+        overwriting the {subjects} subject(s) and {progressCount} progress record(s)
         currently on this device.
       </div>
       {s.exportedAt ? (

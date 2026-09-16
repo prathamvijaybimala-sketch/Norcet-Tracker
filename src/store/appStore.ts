@@ -18,7 +18,7 @@ import type {
 import { Capacitor } from '@capacitor/core';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
-import { todayISO } from '../lib/dates';
+import { isISODate, todayISO } from '../lib/dates';
 import { buildLectureIndex, parseCurriculumDetailed, subjectStats, type LectureRef } from '../lib/parseCurriculum';
 import {
   catchUpPlan,
@@ -91,13 +91,11 @@ type Actions = {
   dismissToast: () => void;
 
   importCurriculum: (raw: string) => { subjects: number; lectures: number; warnings: number };
-  clearCurriculum: () => void;
 
   updatePlan: (patch: Partial<PlanConfig>) => void;
   setSubjectOrder: (order: string[]) => void;
   moveSubject: (from: number, to: number) => void;
   setSubjectIncluded: (subjectId: string, included: boolean) => void;
-  ensureBufferDefaults: () => void;
   setBuffer: (subjectId: string, days: number) => void;
   toggleLeave: (date: string) => void;
   addLeaveDates: (dates: string[]) => void;
@@ -107,10 +105,6 @@ type Actions = {
   setFlag: (lectureId: string, flag: ProgressFlag, value: boolean) => void;
   setFlags: (lectureId: string, patch: MarkFlags) => void;
   bulkMark: (lectureIds: string[], patch: MarkFlags) => void;
-
-  markSubjectDone: (subjectId: string, patch: MarkFlags) => void;
-  markTopicDone: (topicId: string, patch: MarkFlags) => void;
-  markFirstN: (subjectId: string, n: number, patch: MarkFlags) => void;
 
   setRevisionIntervals: (intervals: number[]) => void;
   reviewLecture: (lectureId: string) => void;
@@ -293,7 +287,15 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
       const revision = stored.revision && typeof stored.revision === 'object' ? stored.revision : {};
       const settings = normalizeSettings(stored.settings);
 
-      lastSaved = { curriculum: 0, plan: 0, progress: 0, revision: 0 };
+      // Mark the hydrated slices as already saved so the first real edit
+      // persists only what it changed (not all four slices again).
+      const versions: Versions = {
+        curriculum: curriculum.length ? 1 : 0,
+        plan: 1,
+        progress: Object.keys(progress).length ? 1 : 0,
+        revision: Object.keys(revision).length ? 1 : 0,
+      };
+      lastSaved = { ...versions };
       settingsDirty = false; // just read it; nothing to write back yet
       set({
         ready: true,
@@ -305,7 +307,7 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
         theme: settings.theme,
         planLockHash: settings.planLockHash,
         planUnlocked: false, // the plan re-locks on every app launch
-        versions: { curriculum: curriculum.length ? 1 : 0, plan: 1, progress: 1, revision: 1 },
+        versions,
         ...derive(curriculum, planConfig, progress),
       });
     },
@@ -331,14 +333,29 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
       const state = get();
 
       // Progress is preserved by lecture id: re-importing the same file (or a
-      // newer version of it) updates names/durations but never orphans progress.
+      // newer version of it) updates names/durations but keeps matching ids.
+      // State that refers to lectures no longer in the curriculum is pruned
+      // so it stops persisting, exporting and (in Data stats) being counted.
       const freshIds = new Set<string>();
       for (const subject of subjects) {
         for (const topic of subject.topics) {
           for (const lecture of topic.lectures) freshIds.add(lecture.id);
         }
       }
-      const orphaned = Object.keys(state.progress).filter((id) => !freshIds.has(id));
+      const subjectIds = new Set(subjects.map((sub) => sub.id));
+      const prune = <T>(obj: Record<string, T>): Record<string, T> =>
+        Object.fromEntries(Object.entries(obj).filter(([id]) => freshIds.has(id)));
+      const progress = Object.keys(state.progress).some((id) => !freshIds.has(id))
+        ? prune(state.progress)
+        : state.progress;
+      const offDayLectures = Object.keys(state.planConfig.offDayLectures ?? {}).some((id) => !freshIds.has(id))
+        ? prune(state.planConfig.offDayLectures ?? {})
+        : state.planConfig.offDayLectures;
+      const revision = Object.keys(state.revision).some((id) => !freshIds.has(id))
+        ? prune(state.revision)
+        : state.revision;
+      const prunedSomething =
+        progress !== state.progress || offDayLectures !== state.planConfig.offDayLectures || revision !== state.revision;
 
       const previousOrder = state.planConfig.subjectOrder;
       const known = new Set(previousOrder);
@@ -348,6 +365,9 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
       ];
 
       const bufferDaysBySubject = { ...state.planConfig.bufferDaysBySubject };
+      for (const k of Object.keys(bufferDaysBySubject)) {
+        if (!subjectIds.has(k)) delete bufferDaysBySubject[k]; // subject no longer exists
+      }
       for (const subject of subjects) {
         if (bufferDaysBySubject[subject.id] === undefined) {
           bufferDaysBySubject[subject.id] = suggestBufferForSubject(
@@ -357,27 +377,54 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
         }
       }
 
-      const planConfig: PlanConfig = { ...state.planConfig, subjectOrder, bufferDaysBySubject };
-      commit({ curriculum: subjects, planConfig, route: 'today' }, { curriculum: true, plan: true });
+      const planConfig: PlanConfig = {
+        ...state.planConfig,
+        subjectOrder,
+        bufferDaysBySubject,
+        offDayLectures: offDayLectures ?? {},
+      };
+      commit(
+        { curriculum: subjects, planConfig, progress, revision, route: 'today' },
+        {
+          curriculum: true,
+          plan: true,
+          progress: progress !== state.progress,
+          revision: revision !== state.revision,
+        },
+      );
       if (typeof window !== 'undefined') window.location.hash = '#/today';
       return {
         subjects: subjects.length,
         lectures: freshIds.size,
-        warnings: warnings.length + (orphaned.length ? 1 : 0),
+        warnings: warnings.length + (prunedSomething ? 1 : 0),
       };
     },
 
-    clearCurriculum() {
-      commit({ curriculum: [], progress: {}, revision: {} }, { curriculum: true, progress: true, revision: true });
-      set({ route: 'import' });
-      if (typeof window !== 'undefined') window.location.hash = '#/import';
-    },
-
     updatePlan(patch) {
+      const current = get().planConfig;
+      // Sanitize inputs at this single choke point: HTML min/max attributes
+      // are decorative - a cleared date field delivers an empty string and
+      // typing "99" is accepted verbatim. Without this, an invalid
+      // startDate would corrupt the persisted plan (empty schedule, garbage
+      // date, and it never recovers on its own).
+      const next: PlanConfig = { ...current, ...patch };
+      if (!isISODate(next.startDate)) next.startDate = current.startDate;
+      if (typeof next.dailyHours === 'number' && Number.isFinite(next.dailyHours)) {
+        next.dailyHours = Math.min(16, Math.max(0.5, next.dailyHours));
+      } else {
+        next.dailyHours = current.dailyHours;
+      }
+      if (typeof next.playbackSpeed === 'number' && Number.isFinite(next.playbackSpeed)) {
+        next.playbackSpeed = Math.min(4, Math.max(0.5, next.playbackSpeed));
+      } else {
+        next.playbackSpeed = current.playbackSpeed;
+      }
+      if (Array.isArray(next.studyDays) && next.studyDays.length === 0) {
+        next.studyDays = current.studyDays; // a plan with zero study days is a dead plan
+      }
       // Manually moving the start date invalidates a previous "shift the
       // schedule" anchor (its overflow day no longer means anything), unless
       // the caller sets a fresh anchor in the same patch.
-      const next = { ...get().planConfig, ...patch };
       if (patch.startDate !== undefined && patch.backlogAnchor === undefined) {
         next.backlogAnchor = null;
       }
@@ -405,22 +452,6 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
           [...order, subjectId]
         : order.filter((id) => id !== subjectId);
       get().updatePlan({ subjectOrder: next });
-    },
-
-    ensureBufferDefaults() {
-      const { curriculum, planConfig } = get();
-      const buffers = { ...planConfig.bufferDaysBySubject };
-      let changed = false;
-      for (const subject of curriculum) {
-        if (buffers[subject.id] === undefined) {
-          buffers[subject.id] = suggestBufferForSubject(
-            subjectStats(subject).totalSec,
-            planConfig.playbackSpeed,
-          );
-          changed = true;
-        }
-      }
-      if (changed) get().updatePlan({ bufferDaysBySubject: buffers });
     },
 
     setBuffer(subjectId, days) {
@@ -553,39 +584,6 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
       get().notify(`Updated ${lectureIds.length} lecture${lectureIds.length === 1 ? '' : 's'}.`);
     },
 
-    markSubjectDone(subjectId, patch) {
-      const subject = get().curriculum.find((s) => s.id === subjectId);
-      if (!subject) return;
-      const ids: string[] = [];
-      for (const topic of subject.topics) for (const l of topic.lectures) ids.push(l.id);
-      get().bulkMark(ids, patch);
-    },
-
-    markTopicDone(topicId, patch) {
-      const ids: string[] = [];
-      for (const subject of get().curriculum) {
-        for (const topic of subject.topics) {
-          if (topic.id === topicId) {
-            for (const l of topic.lectures) ids.push(l.id);
-          }
-        }
-      }
-      get().bulkMark(ids, patch);
-    },
-
-    markFirstN(subjectId, n, patch) {
-      const subject = get().curriculum.find((s) => s.id === subjectId);
-      if (!subject) return;
-      const ids: string[] = [];
-      for (const topic of subject.topics) {
-        for (const l of topic.lectures) {
-          if (ids.length >= n) break;
-          ids.push(l.id);
-        }
-      }
-      get().bulkMark(ids, patch);
-    },
-
     setRevisionIntervals(intervals) {
       const cleaned = intervals.map((n) => Math.max(1, Math.round(n))).filter((n) => Number.isFinite(n));
       get().updatePlan({
@@ -694,8 +692,24 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
     },
 
     applyBackup({ curriculum, planConfig, progress, revision }) {
+      // Normalize (a hand-edited file must not be able to carry a missing
+      // field into generateSchedule) and prune anything that refers to
+      // lectures not present in THIS backup's curriculum.
+      const freshIds = new Set<string>();
+      for (const subject of curriculum) {
+        for (const topic of subject.topics) {
+          for (const lecture of topic.lectures) freshIds.add(lecture.id);
+        }
+      }
+      const keep = <T>(obj: Record<string, T>): Record<string, T> =>
+        Object.fromEntries(Object.entries(obj).filter(([id]) => freshIds.has(id)));
       commit(
-        { curriculum, planConfig, progress, revision },
+        {
+          curriculum,
+          planConfig: normalizePlanConfig(planConfig as unknown as Record<string, unknown>),
+          progress: keep(progress ?? {}),
+          revision: keep(revision ?? {}),
+        },
         { curriculum: true, plan: true, progress: true, revision: true },
       );
       set({ route: curriculum.length ? 'today' : 'import' });
@@ -726,14 +740,3 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
   };
 });
 
-/* ------------------------------ selectors ------------------------------ */
-
-export const selectToday = (state: AppState) => state.scheduleByDate;
-
-export function useLectureRef(lectureId: string): LectureRef | undefined {
-  return useAppStore((s) => s.lectureIndex.get(lectureId));
-}
-
-export function useLectureProgress(lectureId: string): LectureProgress | undefined {
-  return useAppStore((s) => s.progress[lectureId]);
-}

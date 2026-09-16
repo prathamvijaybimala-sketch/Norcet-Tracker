@@ -56,6 +56,36 @@ describe('syncRevisionQueue', () => {
     expect(added).toBe(0);
     expect(revision.a.nextDueDate).toBe('2026-10-01');
   });
+
+  it('removes the item as soon as any box is un-ticked (no "due" forever)', () => {
+    const full = { a: entry({ lectureWatched: true, notesDone: true, questionsDone: true }) };
+    const queued = syncRevisionQueue(full, {}, [3, 14, 30], TODAY).revision;
+    expect(Object.keys(queued)).toEqual(['a']);
+
+    const unticked = { a: entry({ lectureWatched: true, notesDone: true, questionsDone: false }) };
+    const { revision, removed } = syncRevisionQueue(unticked, queued, [3, 14, 30], TODAY);
+    expect(removed).toBe(1);
+    expect(revision).toEqual({});
+  });
+
+  it('removes orphaned items whose progress entry is gone', () => {
+    const full = { a: entry({ lectureWatched: true, notesDone: true, questionsDone: true }) };
+    const queued = syncRevisionQueue(full, {}, [3], TODAY).revision;
+    const { revision, removed, added } = syncRevisionQueue({}, queued, [3], TODAY);
+    expect(removed).toBe(1);
+    expect(added).toBe(0);
+    expect(revision).toEqual({});
+  });
+
+  it('re-queues with stage 0 if a removed lecture becomes eligible again', () => {
+    const full = { a: entry({ lectureWatched: true, notesDone: true, questionsDone: true }) };
+    const queued = syncRevisionQueue(full, {}, [3], TODAY).revision;
+    const unticked = { a: entry({ lectureWatched: false, notesDone: true, questionsDone: true }) };
+    const cleared = syncRevisionQueue(unticked, queued, [3], TODAY).revision;
+    const again = syncRevisionQueue(full, cleared, [3], TODAY).revision;
+    expect(again.a.intervalStage).toBe(0);
+    expect(again.a.nextDueDate).toBe('2026-09-18');
+  });
 });
 
 describe('markReviewed / skipRevision', () => {

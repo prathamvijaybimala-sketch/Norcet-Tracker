@@ -13,7 +13,6 @@
 
 import type { Lecture, PlanConfig, ProgressStore, ScheduleDay, Subject } from '../types';
 import { addDays, diffDays, weekdayOf } from './dates';
-import type { LectureRef } from './parseCurriculum';
 
 /** A lecture only counts as "not yet done" if it has not been watched. */
 function isRemaining(progress: ProgressStore, id: string): boolean {
@@ -547,33 +546,6 @@ export function nextOffDayOnOrAfter(
   return null;
 }
 
-/**
- * Small LRU-ish memo cache.
- *
- * Keyed by a cheap version signature (see store/versionSignature) rather than a
- * deep-equality check on every render. Holds a handful of entries so that, e.g.,
- * a setup-screen preview with modified settings does not thrash the main cache.
- */
-export function createScheduleCache(limit = 8) {
-  const cache = new Map<string, ScheduleDay[]>();
-  return function getSchedule(
-    key: string,
-    curriculum: Subject[],
-    planConfig: PlanConfig,
-    progress: ProgressStore,
-  ): ScheduleDay[] {
-    const hit = cache.get(key);
-    if (hit) return hit;
-    const value = generateSchedule(curriculum, planConfig, progress);
-    cache.set(key, value);
-    if (cache.size > limit) {
-      const oldest = cache.keys().next().value;
-      if (oldest !== undefined) cache.delete(oldest);
-    }
-    return value;
-  };
-}
-
 /** Last day that actually has lectures assigned (ignoring trailing buffer days). */
 export function lastStudyDate(schedule: ScheduleDay[]): string | null {
   for (let i = schedule.length - 1; i >= 0; i--) {
@@ -582,20 +554,3 @@ export function lastStudyDate(schedule: ScheduleDay[]): string | null {
   return null;
 }
 
-export function countStudyDays(schedule: ScheduleDay[]): number {
-  let n = 0;
-  for (const day of schedule) if (day.type === 'study') n++;
-  return n;
-}
-
-/** Flattened, ordered lectures of a subject (topic order, then lecture order). */
-export function flattenSubject(subject: Subject): LectureRef[] {
-  const out: LectureRef[] = [];
-  const subjectLectureCount = subject.topics.reduce((n, t) => n + t.lectures.length, 0);
-  for (const topic of subject.topics) {
-    for (const lecture of topic.lectures) {
-      out.push({ lecture, topic, subject, indexInSubject: out.length, subjectLectureCount });
-    }
-  }
-  return out;
-}

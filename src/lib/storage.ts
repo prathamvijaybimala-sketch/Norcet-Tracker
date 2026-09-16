@@ -90,6 +90,14 @@ function writeLocal<T>(key: StorageKey, value: T): void {
   }
 }
 
+/**
+ * Reads go to IndexedDB when it is available and to the localStorage
+ * fallback when it is not - the SAME backend is used for every key, so a
+ * key can never be split across the two stores. (The remaining trade-off:
+ * writes made while IndexedDB is DOWN land in localStorage and are not
+ * merged back if IndexedDB recovers later; that outage mode is rare on the
+ * Capacitor WebView and acceptable for this app.)
+ */
 export async function readKey<T>(key: StorageKey): Promise<T | undefined> {
   try {
     const db = await getDB();
@@ -101,16 +109,6 @@ export async function readKey<T>(key: StorageKey): Promise<T | undefined> {
     }
     return readLocal<T>(key);
   }
-}
-
-export async function writeKey<T>(key: StorageKey, value: T): Promise<void> {
-  const db = await getDB();
-  await db.put(STORE, value, key);
-}
-
-export async function deleteKey(key: StorageKey): Promise<void> {
-  const db = await getDB();
-  await db.delete(STORE, key);
 }
 
 export type PersistedState = {
@@ -161,7 +159,9 @@ function scheduleFlush(): void {
   if (timer) clearTimeout(timer);
   timer = setTimeout(() => {
     timer = null;
-    flushPromise = performFlush();
+    // CHAIN onto any in-flight flush: on a slow IndexedDB a later batch must
+    // never commit before an earlier one (stale value would win).
+    flushPromise = flushPromise.then(performFlush);
   }, WRITE_DEBOUNCE_MS);
 }
 

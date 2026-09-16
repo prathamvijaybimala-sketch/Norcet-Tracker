@@ -58,7 +58,9 @@ export function PaceControls() {
               id="start-date"
               type="date"
               value={planConfig.startDate}
-              onChange={(e) => updatePlan({ startDate: e.target.value })}
+              // A cleared field delivers "" - ignore it (the store also
+              // rejects invalid dates); the previous date stays in force.
+              onChange={(e) => e.target.value && updatePlan({ startDate: e.target.value })}
             />
           </div>
         </div>

@@ -88,8 +88,8 @@ export function RevisionScreen() {
             </div>
             <div className="tiny faint" style={{ marginTop: 8 }}>
               A lecture enters the queue {intervals[0]} days after lecture + notes + questions are
-              all ticked. After the last interval it loops on that interval forever, so nothing ever
-              disappears from revision.
+              all ticked (un-ticking any box removes it again). After the last interval it loops on
+              that interval forever, so nothing ever disappears from revision.
             </div>
           </div>
         ) : null}
