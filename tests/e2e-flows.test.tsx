@@ -639,6 +639,10 @@ describe('data tab flows', () => {
     await screen.findByText('Backup');
     let captured: Blob | null = null;
     URL.createObjectURL = ((b: Blob) => { captured = b; return 'blob:test'; }) as typeof URL.createObjectURL;
+    // jsdom has no revokeObjectURL; the export path schedules a revoke 1s
+    // later, which would otherwise throw as an unhandled timer error after
+    // the test (and flakily fail whichever test was running at the time).
+    URL.revokeObjectURL = (() => undefined) as typeof URL.revokeObjectURL;
     const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
     fireEvent.click(screen.getByRole('button', { name: 'Export data (JSON)' }));
     await waitFor(() => expect(captured).toBeTruthy());
