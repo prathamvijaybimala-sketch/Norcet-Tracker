@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useAppStore } from '../store/appStore';
 import { dueRevisions, stageLabel, upcomingRevisions } from '../lib/revision';
+import { topicActiveLectureIds } from '../lib/topicQuestions';
 import { EmptyState, StatCard } from '../components/ui';
 import { formatDate, todayISO } from '../lib/dates';
 import { formatDuration } from '../lib/duration';
@@ -9,6 +10,12 @@ import { formatDuration } from '../lib/duration';
  * Revision (section 6): the spaced-repetition queue.
  *
  * Backlog (missed lectures) is its own tab now - see BacklogScreen.tsx.
+ *
+ * Questions (MCQs) are ALSO tracked here, in their own section: the
+ * homepage deliberately tracks only lectures, so the per-topic Questions
+ * checkbox lives on this tab. A topic appears once at least one of its
+ * lectures is watched; ticking its box marks questions done for the topic
+ * and lets the watched lectures enter the revision queue.
  */
 export function RevisionScreen() {
   const revision = useAppStore((s) => s.revision);
@@ -18,9 +25,47 @@ export function RevisionScreen() {
   const reviewLecture = useAppStore((s) => s.reviewLecture);
   const skipLectureReview = useAppStore((s) => s.skipLectureReview);
   const removeRevision = useAppStore((s) => s.removeRevision);
+  const curriculum = useAppStore((s) => s.curriculum);
+  const progress = useAppStore((s) => s.progress);
+  const scheduleByLecture = useAppStore((s) => s.scheduleByLecture);
+  const setTopicQuestions = useAppStore((s) => s.setTopicQuestions);
   const [showSettings, setShowSettings] = useState(false);
 
   const today = todayISO();
+
+  // Topics that are actionable for Questions: included in the plan, with at
+  // least one watched lecture (or already marked questions-done). Judged
+  // over the topic's ACTIVE lectures, exactly like the store's checkbox
+  // write scope.
+  const questionTopics = useMemo(() => {
+    const included = new Set(planConfig.subjectOrder);
+    const out: {
+      subjectId: string;
+      subjectName: string;
+      topics: { topicId: string; topicName: string; watchedCount: number; totalCount: number; allQ: boolean }[];
+    }[] = [];
+    for (const subject of curriculum) {
+      if (!included.has(subject.id)) continue;
+      const topics = [];
+      for (const topic of subject.topics) {
+        const ids = topic.lectures.map((l) => l.id);
+        const watchedCount = ids.filter((id) => progress[id]?.lectureWatched).length;
+        const activeIds = topicActiveLectureIds(topic, scheduleByLecture, progress);
+        const anyQ = activeIds.some((id) => progress[id]?.questionsDone);
+        if (watchedCount === 0 && !anyQ) continue;
+        const allQ = activeIds.length > 0 && activeIds.every((id) => progress[id]?.questionsDone);
+        topics.push({
+          topicId: topic.id,
+          topicName: topic.name,
+          watchedCount,
+          totalCount: ids.length,
+          allQ,
+        });
+      }
+      if (topics.length) out.push({ subjectId: subject.id, subjectName: subject.name, topics });
+    }
+    return out;
+  }, [curriculum, progress, scheduleByLecture, planConfig.subjectOrder]);
   const intervals = planConfig.revisionIntervals;
   const due = useMemo(() => dueRevisions(revision, today), [revision, today]);
   const upcoming = useMemo(() => upcomingRevisions(revision, today), [revision, today]);
@@ -149,6 +194,41 @@ export function RevisionScreen() {
               </div>
             );
           })
+        )}
+      </div>
+
+      <div className="card">
+        <div className="card-title">Questions by topic</div>
+        <div className="tiny faint" style={{ margin: '4px 0 10px' }}>
+          Do a topic&rsquo;s MCQs, then tick it here. Its watched lectures enter the
+          revision queue once lecture + notes + questions are all ticked.
+        </div>
+        {questionTopics.length === 0 ? (
+          <div className="tiny faint">
+            Topics appear here once you start watching lectures.
+          </div>
+        ) : (
+          questionTopics.map(({ subjectId, subjectName, topics }) => (
+            <div key={subjectId} className="topic-block">
+              <div className="topic-head">
+                <span className="topic-name truncate" title={subjectName}>
+                  {subjectName}
+                </span>
+              </div>
+              {topics.map((t) => (
+                <label key={t.topicId} className={`check question-row ${t.allQ ? 'on' : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={t.allQ}
+                    onChange={(e) => setTopicQuestions(t.topicId, e.target.checked)}
+                    aria-label={`Questions done for ${t.topicName}`}
+                  />
+                  <span className="check-label truncate">{t.topicName}</span>
+                  <span className="tiny faint">{t.watchedCount}/{t.totalCount} watched</span>
+                </label>
+              ))}
+            </div>
+          ))
         )}
       </div>
 

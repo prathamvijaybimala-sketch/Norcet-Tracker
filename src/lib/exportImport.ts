@@ -171,13 +171,6 @@ export function normalizePlanConfig(plan: Record<string, unknown>): PlanConfig {
     bufferCountsOffDays: plan.bufferCountsOffDays !== false,
     revisionIntervals: revisionIntervals.length ? revisionIntervals : [...DEFAULT_REVISION_INTERVALS],
     studentName: typeof plan.studentName === 'string' ? plan.studentName : '',
-    dayBasis: isObject(plan.dayBasis)
-      ? (Object.fromEntries(
-          Object.entries(plan.dayBasis).filter(
-            ([d, ids]) => isISODate(d) && Array.isArray(ids) && ids.every((x) => typeof x === 'string'),
-          ),
-        ) as Record<string, string[]>)
-      : {},
     offDayLectures: isObject(plan.offDayLectures)
       ? (Object.fromEntries(
           Object.entries(plan.offDayLectures).filter(([, v]) => isISODate(v)),
@@ -206,7 +199,6 @@ export function defaultPlanConfig(startDate: string, subjectOrder: string[] = []
     bufferCountsOffDays: true,
     revisionIntervals: [...DEFAULT_REVISION_INTERVALS],
     studentName: '',
-    dayBasis: {},
     offDayLectures: {},
     backlogAnchor: null,
     dayHours: {},

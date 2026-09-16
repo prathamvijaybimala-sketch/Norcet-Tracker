@@ -132,9 +132,11 @@ describe('backlog: move to off day', () => {
       },
     };
     const schedule = generateSchedule(subjects, config, progress);
-    // The Sunday slot vanishes; only the two remaining lectures stay.
+    // The Sunday slot vanishes: a watched lecture is no longer parked work -
+    // it simply sits on its fixed calendar day, done. All three lectures
+    // keep their schedule slots; none rides the off day.
     expect(schedule.find((d) => d.date === '2026-09-20')).toBeUndefined();
-    expect(schedule.reduce((n, d) => n + d.lectureIds.length, 0)).toBe(2);
+    expect(schedule.reduce((n, d) => n + d.lectureIds.length, 0)).toBe(3);
   });
 
   it('several lectures can share one off day', () => {

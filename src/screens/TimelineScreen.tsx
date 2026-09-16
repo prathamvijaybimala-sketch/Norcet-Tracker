@@ -12,7 +12,6 @@ export function TimelineScreen() {
   const schedule = useAppStore((s) => s.schedule);
   const scheduleByDate = useAppStore((s) => s.scheduleByDate);
   const progress = useAppStore((s) => s.progress);
-  const planConfig = useAppStore((s) => s.planConfig);
   const theme = useAppStore((s) => s.theme);
   const [selected, setSelected] = useState<string | null>(null);
   const today = todayISO();
@@ -30,12 +29,10 @@ export function TimelineScreen() {
   const months = useMemo(() => buildMonthGrid(schedule), [schedule]);
 
   const selectedDay = selected ? scheduleByDate.get(selected) : undefined;
-  // Baseline (planConfig.dayBasis): the lectures the plan originally assigned
-  // to that day. The live list holds only UNwatched lectures (compacting
-  // queue), so counting watched against it would always read 0.
-  const basisIds = selectedDay
-    ? planConfig.dayBasis?.[selectedDay.date] ?? selectedDay.lectureIds
-    : [];
+  // In the static model a day's lectureIds IS the fixed set the plan assigned
+  // to that date (watched lectures stay on their day), so the count reads
+  // straight off the live list - no baseline needed.
+  const basisIds = selectedDay ? selectedDay.lectureIds : [];
   const basisWatched = basisIds.filter((id) => progress[id]?.lectureWatched).length;
 
   if (schedule.length === 0) {
@@ -164,7 +161,7 @@ export function TimelineScreen() {
           <div className="tiny faint" style={{ marginBottom: 8 }}>
             Checkboxes work on any day, past or future - logging progress retroactively is normal.
           </div>
-          <TopicSection lectureIds={selectedDay.lectureIds} contextDate={selectedDay.date} />
+          <TopicSection lectureIds={selectedDay.lectureIds} showScheduledDate />
         </Modal>
       ) : null}
     </div>

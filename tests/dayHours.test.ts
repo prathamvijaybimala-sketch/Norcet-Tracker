@@ -195,12 +195,12 @@ describe('applyDayHourOverrides via generateSchedule', () => {
     expectNextWeekUnchanged(base, next);
   });
 
-  it('an override acts on the week\'s current (repacked) lectures and never resurrects watched ones', () => {
+  it('an override reflows the week around PINNED watched lectures', () => {
     const curriculum = makeCurriculum(32);
     const planIds = curriculum.map((s) => s.id);
     const base = generateSchedule(curriculum, makePlan({}, planIds), {});
-    // Watch all of Monday's lectures: later lectures pull forward into the
-    // freed slots (the schedule is compacted), so every day still carries 4.
+    // Watch all of Monday's lectures: in the fixed calendar they stay PINNED
+    // to Monday (done) - nothing pulls forward.
     const watched = new Set(ids(byDate(base), MON1));
     const progress: ProgressStore = {};
     for (const id of watched) {
@@ -212,21 +212,30 @@ describe('applyDayHourOverrides via generateSchedule', () => {
         completedDate: MON1,
       };
     }
+    // Watching never re-packs: the calendar is byte-identical to the base.
     const repacked = generateSchedule(curriculum, makePlan({}, planIds), progress);
-    const next = generateSchedule(curriculum, makePlan({ [WED1]: 2 }, planIds), progress);
+    expect(repacked.map((d) => [d.date, d.lectureIds])).toEqual(
+      base.map((d) => [d.date, d.lectureIds]),
+    );
 
+    // Now cut Wednesday to 2h: the week's UNwatched pool reflows around the
+    // pinned Monday lectures. Wed keeps its first two, the tail rides onto
+    // Sunday; week two is untouched; nothing is lost.
+    const next = generateSchedule(curriculum, makePlan({ [WED1]: 2 }, planIds), progress);
     const n = byDate(next);
-    // Wednesday keeps its CURRENT (repacked) first two lectures; the week's
-    // tail rides onto Sunday, exactly as on a fresh plan.
-    expect(ids(n, WED1)).toEqual([L(13), L(14)]);
-    expect(ids(n, SUN1)).toEqual([L(27), L(28)]);
-    // No watched lecture ever comes back into the schedule.
-    for (const day of next) {
-      for (const id of day.lectureIds) expect(watched.has(id), id).toBe(false);
-    }
+    expect(ids(n, MON1)).toEqual([L(1), L(2), L(3), L(4)]);
+    expect(ids(n, TUE1)).toEqual([L(5), L(6), L(7), L(8)]);
+    expect(ids(n, WED1)).toEqual([L(9), L(10)]);
+    expect(ids(n, THU1)).toEqual([L(11), L(12), L(13), L(14)]);
+    expect(ids(n, FRI1)).toEqual([L(15), L(16), L(17), L(18)]);
+    expect(ids(n, SAT1)).toEqual([L(19), L(20), L(21), L(22)]);
+    expect(ids(n, SUN1)).toEqual([L(23), L(24)]);
+    // Every watched lecture still sits exactly on its original day.
+    for (const id of watched) expect(n.get(MON1)!.lectureIds).toContain(id);
     // Week two is untouched.
-    expect(ids(n, MON2)).toEqual(ids(byDate(repacked), MON2));
-    expect(total(next)).toBe(total(repacked));
+    expect(ids(n, MON2)).toEqual([L(25), L(26), L(27), L(28)]);
+    // Nothing lost: all 32 lectures still scheduled.
+    expect(total(next)).toBe(32);
   });
 
   it('keeps subject runs intact when the reduced day is a subject\'s first day', () => {

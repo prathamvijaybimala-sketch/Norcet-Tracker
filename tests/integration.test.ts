@@ -116,9 +116,10 @@ describe('section 8.2 sanity check', () => {
     expect(firstDay.subjectId).toBe(planConfig.subjectOrder[0]);
   });
 
-  it('marks a chunk of Obs/Gyn pre-done and the plan compresses', () => {
+  it('marks a chunk of Obs/Gyn pre-done and the plan does NOT compress', () => {
     const { subjects, planConfig, byName } = setup();
-    const before = computePlanStats(generateSchedule(subjects, planConfig, {}));
+    const beforeSchedule = generateSchedule(subjects, planConfig, {});
+    const before = computePlanStats(beforeSchedule);
     const obsGyn = byName.get('Midwifery and Obstetrical Nursing')!;
 
     const progress: ProgressStore = {};
@@ -137,13 +138,17 @@ describe('section 8.2 sanity check', () => {
     }
     expect(Object.keys(progress)).toHaveLength(100);
 
-    const after = computePlanStats(generateSchedule(subjects, planConfig, progress));
+    // The fixed calendar never shrinks for progress: identical days and
+    // lecture slots, same finish date.
+    const afterSchedule = generateSchedule(subjects, planConfig, progress);
+    expect(afterSchedule.map((d) => [d.date, d.lectureIds])).toEqual(
+      beforeSchedule.map((d) => [d.date, d.lectureIds]),
+    );
+    const after = computePlanStats(afterSchedule, progress);
+    expect(after.totalDays).toBe(before.totalDays);
+    expect(after.finishDate).toBe(before.finishDate);
+    // But the work remaining reflects what is watched.
     expect(after.remainingLectures).toBe(767 - 100);
-    expect(after.totalDays).toBeLessThan(before.totalDays);
-    // 100 lectures x ~40 min raw / 1.5x = ~44 effective hours = ~15 study days.
-    const saved = before.totalDays - after.totalDays;
-    expect(saved).toBeGreaterThan(10);
-    expect(saved).toBeLessThan(26);
   });
 
   it('shifts everything forward when a 5-day leave block is added in November', () => {

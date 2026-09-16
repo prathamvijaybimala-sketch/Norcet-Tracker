@@ -247,8 +247,8 @@ export function BulkMarkPanel() {
         >
           <p className="small">
             {confirm.ids.length} lecture{confirm.ids.length === 1 ? '' : 's'} will be marked as
-            watched{alsoExtras ? ', with notes and questions done' : ''}, dated today. The schedule
-            recomputes immediately, so the timeline will shrink.
+            watched{alsoExtras ? ', with notes and questions done' : ''}, dated today. They keep
+            their scheduled days - the plan never reshuffles just because lectures are done.
           </p>
           <p className="small muted">
             This only touches the <b>watched</b> flag{alsoExtras ? ' plus notes/questions' : ''} -

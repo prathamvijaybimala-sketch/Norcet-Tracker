@@ -215,7 +215,7 @@ describe('stats helpers', () => {
     });
   });
 
-  it("computeTodayStats reports ahead / behind without reflowing anything", () => {
+  it('computeTodayStats measures pace against the FIXED plan (watching never reflows it)', () => {
     const subjects = makeSubjects([hours('A', 1, 1, 1, 1, 1, 1)]);
     const plan = makePlan({
       subjectOrder: [subjects[0].id],
@@ -224,19 +224,25 @@ describe('stats helpers', () => {
       startDate: TODAY,
       studyDays: [0, 1, 2, 3, 4, 5, 6],
     });
-    // Two days in, nothing watched -> behind with a backlog.
+    const idx = buildLectureIndex(subjects);
+    // Two days in, nothing watched -> behind, with the past days' lectures as backlog.
     const schedule = generateSchedule(subjects, plan, {});
-    const behind = computeTodayStats(subjects, plan, {}, schedule, '2026-09-17');
+    const behind = computeTodayStats(subjects, plan, {}, schedule, '2026-09-17', idx);
     expect(behind.backlogLectures).toBe(6);
     expect(behind.deltaDays).toBeLessThan(0);
 
-    // Everything watched -> ahead.
+    // Everything watched: the plan is the SAME calendar (no reflow), the
+    // backlog clears, and pace reads exactly on-track (she finished exactly
+    // what the plan allotted to the days that have passed).
     const progress = Object.fromEntries(
       subjects[0].topics[0].lectures.map((l) => [l.id, entry({ lectureId: l.id, lectureWatched: true })]),
     );
     const scheduleAfter = generateSchedule(subjects, plan, progress);
-    const ahead = computeTodayStats(subjects, plan, progress, scheduleAfter, '2026-09-17');
-    expect(ahead.backlogLectures).toBe(0);
-    expect(ahead.deltaDays).toBeGreaterThan(0);
+    expect(scheduleAfter.map((d) => d.lectureIds.length)).toEqual(
+      schedule.map((d) => d.lectureIds.length),
+    );
+    const done = computeTodayStats(subjects, plan, progress, scheduleAfter, '2026-09-17', idx);
+    expect(done.backlogLectures).toBe(0);
+    expect(done.deltaDays).toBe(0);
   });
 });

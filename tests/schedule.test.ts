@@ -61,7 +61,7 @@ describe('generateSchedule', () => {
     expect(outline(schedule)).toEqual([`${START}:study:1`, '2026-09-16:study:1']);
   });
 
-  it('4. a fully completed subject contributes zero days AND zero buffer', () => {
+  it('4. a completed subject keeps its days - the calendar is fixed, not compacting', () => {
     const subjects = makeSubjects([hours('A', 1, 1), hours('B', 1)]);
     const progress = watched(subjects, (name) => name === 'A');
     const schedule = generateSchedule(
@@ -74,11 +74,16 @@ describe('generateSchedule', () => {
       }),
       progress,
     );
-    // Only B remains: one study day + its 10 buffer days = 11 days.
-    expect(schedule.filter((d) => d.type === 'study')).toHaveLength(1);
-    expect(schedule.filter((d) => d.type === 'buffer')).toHaveLength(10);
-    expect(schedule).toHaveLength(11);
-    expect(schedule.every((d) => d.subjectId === subjects[1].id)).toBe(true);
+    // The fixed calendar never shrinks: A keeps its study day (its lectures
+    // sit on it as done) and both subjects keep their buffers.
+    expect(schedule.filter((d) => d.type === 'study')).toHaveLength(2);
+    expect(schedule.filter((d) => d.type === 'buffer')).toHaveLength(20);
+    expect(schedule).toHaveLength(22);
+    const aIds = new Set(subjects[0].topics[0].lectures.map((l) => l.id));
+    const dayA = schedule.find((d) => d.type === 'study' && d.subjectId === subjects[0].id)!;
+    expect(dayA.lectureIds).toHaveLength(2);
+    expect(dayA.lectureIds.every((id) => aIds.has(id))).toBe(true);
+    expect(dayA.date).toBe(START);
   });
 
   it('5. leave days push lectures to the next available study day', () => {
@@ -116,7 +121,7 @@ describe('generateSchedule', () => {
     expect(outline(schedule)).toEqual([`${START}:study:3`, '2026-09-16:study:1']);
   });
 
-  it('6. reordering subjects shifts future days only; completed lectures stay done', () => {
+  it('6. reordering re-packs the fixed calendar; completed lectures stay done', () => {
     const subjects = makeSubjects([hours('A', 1), hours('B', 1)]);
     const [a, b] = subjects;
     const base = { dailyHours: 3, playbackSpeed: 1, studyDays: [0, 1, 2, 3, 4, 5, 6] };
@@ -126,15 +131,16 @@ describe('generateSchedule', () => {
     expect(ab[0].subjectId).toBe(a.id);
     expect(ba[0].subjectId).toBe(b.id);
 
-    // With A's lecture already watched, both orders contain only B's lecture,
-    // and it lands on the start date in either order.
+    // With A's lecture already watched the calendar does NOT shrink: both
+    // orders keep every lecture scheduled, A's watched one holding its slot
+    // in whichever position the subject order gives it.
     const progress = watched(subjects, (name) => name === 'A');
     const abDone = generateSchedule(subjects, plan({ ...base, subjectOrder: [a.id, b.id] }), progress);
     const baDone = generateSchedule(subjects, plan({ ...base, subjectOrder: [b.id, a.id] }), progress);
-    expect(abDone).toHaveLength(1);
-    expect(baDone).toHaveLength(1);
-    expect(abDone[0].lectureIds).toEqual(baDone[0].lectureIds);
-    expect(abDone[0].date).toBe(START);
+    expect(abDone.filter((d) => d.type === 'study')).toHaveLength(2);
+    expect(baDone.filter((d) => d.type === 'study')).toHaveLength(2);
+    expect(abDone[0].subjectId).toBe(a.id);
+    expect(baDone[0].subjectId).toBe(b.id);
     // Completed work is untouched by the reorder.
     expect(Object.keys(progress)).toHaveLength(1);
   });

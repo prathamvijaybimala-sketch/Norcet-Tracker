@@ -15,11 +15,19 @@ import { nextOffDayOnOrAfter } from '../lib/schedule';
  *   1. greeting (collapsed to a single line by default; tap reveals the quote)
  *   2. "Today: Xh" hours control (collapsed; soft per-day adjustment + Skip Day)
  *   3. "Today we're studying: <Subject>" (a plain sentence, not a stat header)
- *   4. topic -> lecture rows (accordion, one box per lecture) -> Questions
+ *   4. topic -> lecture rows (one flat row: name left, square checkbox right)
+ *
+ * THE DAY IS A FIXED SET: the plan assigned specific lectures to today's
+ * date and watching never re-packs the plan. Ticking a lecture marks it
+ * done - it leaves the list, nothing from tomorrow slides in, and when the
+ * day's own lectures are all watched the day simply ENDS. Leftovers from
+ * earlier days are "missed" (Backlog tab); catching up is a deliberate
+ * action (Catch me up / Backlog), never automatic.
  *
  * One accent colour marks what needs action; everything else is neutral
  * surface with whitespace-based hierarchy. No numeric "0/5" counters -
  * the single progress bar and the checkbox states carry the information.
+ * Questions (MCQs) are NOT tracked here - the Revision tab owns them.
  */
 
 const GREETINGS = ['Hiiii', 'Hey', 'Hello', 'Namaste', 'Hi'];
@@ -280,8 +288,8 @@ export function TodayScreen() {
   const today = todayISO();
 
   const stats = useMemo(
-    () => computeTodayStats(curriculum, planConfig, progress, schedule, today),
-    [curriculum, planConfig, progress, schedule, today],
+    () => computeTodayStats(curriculum, planConfig, progress, schedule, today, lectureIndex),
+    [curriculum, planConfig, progress, schedule, today, lectureIndex],
   );
   const day = scheduleByDate.get(today);
   const completion = useMemo(
@@ -289,24 +297,15 @@ export function TodayScreen() {
     [day, progress, lectureIndex],
   );
 
-  // What the plan ORIGINALLY assigned to today (PlanConfig.dayBasis). The
-  // live list is a compacting queue - the moment a lecture is watched, the
-  // next unwatched one replaces it - so "all of today is done" can never be
-  // measured on the live list; the baseline is the measure. Refilled lectures
-  // are "tomorrow's list, already generated". Falls back to the live list on
-  // the single frame before a basis exists.
-  const speed = planConfig.playbackSpeed > 0 ? planConfig.playbackSpeed : 1;
-  const basisIds = planConfig.dayBasis?.[today] ?? day?.lectureIds ?? [];
-  const basisWatched = basisIds.filter((id) => progress[id]?.lectureWatched);
-  const basisSec = basisIds.reduce(
-    (n, id) => n + (lectureIndex.get(id)?.lecture.durationSec ?? 0) / speed,
-    0,
+  // Today's FIXED set: exactly the lectures the plan assigned to today's
+  // date. Watching lectures never re-packs the schedule, so this list only
+  // ever shrinks during the day - and when it is empty, the day is done.
+  const unwatchedIds = useMemo(
+    () => (day ? day.lectureIds.filter((id) => !progress[id]?.lectureWatched) : []),
+    [day, progress],
   );
-  const basisDoneSec = basisWatched.reduce(
-    (n, id) => n + (lectureIndex.get(id)?.lecture.durationSec ?? 0) / speed,
-    0,
-  );
-  const dayDone = basisIds.length > 0 && basisWatched.length === basisIds.length;
+  const dayDone =
+    day !== undefined && day.lectureIds.length > 0 && unwatchedIds.length === 0;
 
   // The pop should fire once, at the moment the day becomes done in THIS
   // visit. A reopen starts already done -> the box renders statically.
@@ -366,20 +365,17 @@ export function TodayScreen() {
               Today we&rsquo;re studying: <b>{day.subjectName}</b>
             </div>
             <div style={{ marginBottom: 12 }}>
-              <ProgressBar
-                value={basisDoneSec}
-                max={basisSec || completion.plannedSec}
-                tone={dayDone ? 'ok' : 'accent'}
-              />
+              <ProgressBar value={completion.doneSec} max={completion.plannedSec} tone={dayDone ? 'ok' : 'accent'} />
             </div>
-            <TopicSection lectureIds={day.lectureIds} showContext={false} contextDate={today} />
+            {unwatchedIds.length ? (
+              <TopicSection lectureIds={unwatchedIds} showContext={false} />
+            ) : null}
             {dayDone ? (
               <div
                 className={`ok-box warm-copy${wasDoneAtMount.current ? '' : ' pop'}`}
                 style={{ marginTop: 14 }}
               >
-                Everything planned for today is watched. Nice. Tomorrow's list is already
-                generated from what is left.
+                Everything for today is watched - that&rsquo;s the day done. Nice.
               </div>
             ) : null}
           </>
@@ -423,7 +419,7 @@ export function TodayScreen() {
           </button>
           <div className={`done-list ${doneOpen ? 'open' : ''}`}>
             <div className="done-list-inner">
-              <TopicSection lectureIds={doneToday} showContext={false} accordion={false} contextDate={today} />
+              <TopicSection lectureIds={doneToday} showContext={false} />
             </div>
           </div>
         </div>

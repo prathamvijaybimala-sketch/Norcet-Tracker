@@ -28,7 +28,7 @@ export function missedLectures(
     if (d.type !== 'study') continue;
     for (const id of d.lectureIds) {
       scheduled.add(id);
-      if (d.date < today) out.push({ id, date: d.date });
+      if (d.date < today && !progress[id]?.lectureWatched) out.push({ id, date: d.date });
     }
   }
   const included = new Set(subjectOrder);
@@ -56,7 +56,7 @@ export type PlanStats = {
   remainingSec: number;
 };
 
-export function computePlanStats(schedule: ScheduleDay[]): PlanStats {
+export function computePlanStats(schedule: ScheduleDay[], progress?: ProgressStore): PlanStats {
   let studyDays = 0;
   let bufferDays = 0;
   let finishDate: string | null = null;
@@ -65,7 +65,9 @@ export function computePlanStats(schedule: ScheduleDay[]): PlanStats {
     if (day.type === 'study') {
       studyDays++;
       finishDate = day.date;
-      remainingLectures += day.lectureIds.length;
+      for (const id of day.lectureIds) {
+        if (!progress || !progress[id]?.lectureWatched) remainingLectures++;
+      }
     } else if (day.type === 'buffer') {
       bufferDays++;
     }
@@ -165,6 +167,7 @@ export function computeTodayStats(
   progress: ProgressStore,
   schedule: ScheduleDay[],
   today: string = todayISO(),
+  lectureIndex: Map<string, LectureRef> = new Map(),
 ): TodayStats {
   const speed = planConfig.playbackSpeed > 0 ? planConfig.playbackSpeed : 1;
   const capacitySec = Math.max(1, Math.round(planConfig.dailyHours * 3600));
@@ -176,8 +179,12 @@ export function computeTodayStats(
     if (day.type !== 'study') continue;
     if (day.date < today) {
       elapsedStudyDays++;
-      backlogLectures += day.lectureIds.length;
-      backlogSec += day.plannedSec;
+      for (const id of day.lectureIds) {
+        if (progress[id]?.lectureWatched) continue;
+        const ref = lectureIndex.get(id);
+        backlogLectures++;
+        backlogSec += (ref?.lecture.durationSec ?? 0) / speed;
+      }
     }
   }
 

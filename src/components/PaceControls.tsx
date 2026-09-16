@@ -9,8 +9,11 @@ import { StatCard } from './ui';
 export function PaceControls() {
   const planConfig = useAppStore((s) => s.planConfig);
   const schedule = useAppStore((s) => s.schedule);
+  const progress = useAppStore((s) => s.progress);
   const updatePlan = useAppStore((s) => s.updatePlan);
-  const stats = computePlanStats(schedule);
+  // remainingLectures counts UNwatched lectures (the plan is a fixed calendar;
+  // watched lectures stay on their days).
+  const stats = computePlanStats(schedule, progress);
 
   const toggleDay = (day: number) => {
     const has = planConfig.studyDays.includes(day);

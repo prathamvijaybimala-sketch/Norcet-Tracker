@@ -11,10 +11,9 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import App from '../src/App';
 import { useAppStore } from '../src/store/appStore';
-import { addDays, dayOfYear, formatDate, isISODate, todayISO } from '../src/lib/dates';
+import { addDays, dayOfYear, isISODate, todayISO } from '../src/lib/dates';
 import { nextOffDayOnOrAfter } from '../src/lib/schedule';
 import { computePlanStats } from '../src/lib/stats';
-import { topicActiveLectureIds, topicQuestionsUnlocked } from '../src/lib/topicQuestions';
 import { STUDY_QUOTES } from '../src/lib/quotes';
 import { makeSubjects, hours } from './helpers';
 import type { PlanConfig } from '../src/types';
@@ -37,6 +36,20 @@ vi.mock('@capacitor/share', () => ({
 }));
 
 const demo = readFileSync(resolve(__dirname, '../public/demo-curriculum.json'), 'utf8');
+
+// The export path creates + revokes a Blob URL. Depending on the jsdom
+// build, the URL object may lack one of the helpers (and CI has hit a build
+// where the 1s-later revoke timer blew up as an unhandled error). Stub any
+// missing helper - with writable: true, so the export tests' own per-test
+// swaps and restores keep working.
+for (const name of ['createObjectURL', 'revokeObjectURL'] as const) {
+  if (typeof (URL as unknown as Record<string, unknown>)[name] === 'function') continue;
+  Object.defineProperty(URL, name, {
+    value: name === 'createObjectURL' ? vi.fn(() => 'blob:norcet-test') : vi.fn(),
+    writable: true,
+    configurable: true,
+  });
+}
 
 async function boot() {
   await useAppStore.getState().resetEverything();
@@ -115,7 +128,7 @@ describe('import screen', () => {
 });
 
 describe('today screen', () => {
-  it('lists today\'s lectures and recomputes when a box is ticked', async () => {
+  it("lists today's lectures; ticking only shrinks the list (the day is a fixed set)", async () => {
     await boot();
     await importDemo();
     expect(await screen.findByText(/Today we.re studying/)).toBeTruthy();
@@ -128,9 +141,8 @@ describe('today screen', () => {
     const lecture = state().lectureIndex.get(todayIds[0])!;
     expect(screen.getByText(lecture.lecture.name)).toBeTruthy();
 
-    // Tick the single "Done" box on the first (auto-expanded) lecture row.
-    const rows = screen.getAllByText(lecture.lecture.name);
-    const row = rows[0].closest('.lecture') as HTMLElement;
+    // Tick the square checkbox on the first flat row (name left, box right).
+    const row = screen.getAllByText(lecture.lecture.name)[0].closest('.lec-row') as HTMLElement;
     const boxes = within(row).getAllByRole('checkbox');
     expect(boxes).toHaveLength(1); // one box per lecture (watched + notes together)
     fireEvent.click(boxes[0]);
@@ -139,16 +151,27 @@ describe('today screen', () => {
       expect(useAppStore.getState().progress[todayIds[0]]?.lectureWatched).toBe(true),
     );
     expect(useAppStore.getState().progress[todayIds[0]]?.notesDone).toBe(true); // set together
-    // The schedule regenerated: the lecture is gone from today's planned list…
-    expect(state().scheduleByDate.get(state().planConfig.startDate)?.lectureIds).not.toContain(
+    // The FIXED calendar is untouched: the lecture keeps its slot on today's
+    // day (it is simply done) and the plan neither shrinks nor refills.
+    expect(state().scheduleByDate.get(state().planConfig.startDate)!.lectureIds).toContain(
       todayIds[0],
     );
-    // …and shows up in the "Done today" summary instead of vanishing.
+    expect(state().schedule.length).toBe(before);
+    // …the row itself is gone from today's list (which shows the UNwatched).
+    // Scoped to the study card: the collapsed "watched today" list also holds
+    // the name in the DOM.
+    await waitFor(() =>
+      expect(
+        within(document.querySelector('.study-card') as HTMLElement).queryAllByText(
+          lecture.lecture.name,
+        ),
+      ).toHaveLength(0),
+    );
+    // …and it shows up in the "Done today" summary instead of vanishing.
     expect(await screen.findByText(/watched today/)).toBeTruthy();
-    expect(state().schedule.length).toBeLessThanOrEqual(before);
   });
 
-  it('uses ONE box per lecture (sets watched + notes together), Questions stays per topic', async () => {
+  it('uses ONE box per lecture (sets watched + notes together); Questions lives in the Revision tab', async () => {
     await boot();
     await importDemo();
     await screen.findByText(/Today we.re studying/);
@@ -156,7 +179,7 @@ describe('today screen', () => {
     const state = () => useAppStore.getState();
     const firstId = state().schedule[0].lectureIds[0];
     const nameOf = (id: string) => state().lectureIndex.get(id)!.lecture.name;
-    const row = screen.getAllByText(nameOf(firstId))[0].closest('.lecture') as HTMLElement;
+    const row = screen.getAllByText(nameOf(firstId))[0].closest('.lec-row') as HTMLElement;
     const boxes = within(row).getAllByRole('checkbox');
     expect(boxes).toHaveLength(1); // one box per lecture
     fireEvent.click(boxes[0]);
@@ -173,37 +196,32 @@ describe('today screen', () => {
     );
     const doneRow = within(document.querySelector('.done-list') as HTMLElement)
       .getByText(nameOf(firstId))
-      .closest('.lecture') as HTMLElement;
+      .closest('.lec-row') as HTMLElement;
     fireEvent.click(within(doneRow).getByRole('checkbox'));
     expect(state().progress[firstId].lectureWatched).toBe(false);
     expect(state().progress[firstId].notesDone).toBe(false);
 
-    // Questions is a single per-topic checkbox. The demo's first topic spans
-    // TWO days, so on day one there is nothing to confirm yet - the checkbox
-    // appears on the topic's LAST scheduled day (opened via the Timeline).
-    const topic = state().lectureIndex.get(firstId)!.topic;
-    expect(
-      screen.queryByRole('checkbox', { name: `Questions done for ${topic.name}` }),
-    ).toBeNull();
+    // The homepage tracks LECTURES ONLY: no Questions checkbox anywhere on
+    // the Today screen.
+    expect(screen.queryAllByRole('checkbox', { name: /Questions done for / })).toHaveLength(0);
 
-    const topicIds = topic.lectures.map((l) => l.id);
-    const lastDay = topicIds.map((id) => state().scheduleByLecture.get(id)!).sort().pop()!;
-    fireEvent.click(screen.getByRole('button', { name: /Timeline/ }));
-    const cell = [...document.querySelectorAll('.day-cell.has-plan')].find(
-      (c) => (c as HTMLElement).title!.startsWith(formatDate(lastDay)),
-    ) as HTMLElement;
-    fireEvent.click(cell);
-    const dialog = await screen.findByRole('dialog');
+    // Questions live in the Revision tab: watch the lecture again, open the
+    // tab, and the topic appears with its single per-topic checkbox.
     fireEvent.click(
-      within(dialog).getByRole('checkbox', { name: `Questions done for ${topic.name}` }),
+      screen.getAllByText(nameOf(firstId))[0].closest('.lec-row')!.querySelector('input')!,
     );
+    const topic = state().lectureIndex.get(firstId)!.topic;
+    fireEvent.click(screen.getByRole('button', { name: /Revision/ }));
+    expect(await screen.findByText('Questions by topic')).toBeTruthy();
+    const box = await screen.findByRole('checkbox', { name: `Questions done for ${topic.name}` });
+    fireEvent.click(box);
     // One tick covers the whole topic, including lectures not on this day.
     for (const l of topic.lectures) {
       expect(state().progress[l.id]?.questionsDone).toBe(true);
     }
   });
 
-  it('keeps exactly one lecture row expanded at a time (accordion)', async () => {
+  it('flat rows: name on the left, one square checkbox on the right, per lecture', async () => {
     await boot();
     await importDemo();
     await screen.findByText(/Today we.re studying/);
@@ -212,44 +230,51 @@ describe('today screen', () => {
     const dayIds = state().scheduleByDate.get(state().planConfig.startDate)!.lectureIds;
     expect(dayIds.length).toBeGreaterThanOrEqual(2);
     const nameOf = (id: string) => state().lectureIndex.get(id)!.lecture.name;
-    const openName = () => document.querySelector('.lecture.acc.open .acc-name')!.textContent;
 
-    // The first not-fully-done lecture is expanded automatically.
-    expect(openName()).toBe(nameOf(dayIds[0]));
-    expect(document.querySelectorAll('.lecture.acc.open')).toHaveLength(1);
-
-    // Tapping a collapsed row expands it - view only, no flags are created.
-    fireEvent.click(screen.getByText(nameOf(dayIds[1])));
-    expect(openName()).toBe(nameOf(dayIds[1]));
-    expect(document.querySelectorAll('.lecture.acc.open')).toHaveLength(1);
-    expect(state().progress[dayIds[1]]).toBeUndefined();
-
-    // Tapping the (manual) expanded row collapses it back to the auto row.
-    fireEvent.click(screen.getByText(nameOf(dayIds[1])));
-    expect(openName()).toBe(nameOf(dayIds[0]));
-    expect(document.querySelectorAll('.lecture.acc.open')).toHaveLength(1);
+    // Exactly one checkbox per lecture - nothing else in the study card.
+    const boxes = screen.getAllByRole('checkbox', { name: /Mark watched: / });
+    expect(boxes).toHaveLength(dayIds.length);
+    // No accordion anywhere: every row is a flat .lec-row with the box last
+    // (on the right) and the name inside it (on the left).
+    expect(document.querySelector('.lecture.acc')).toBeNull();
+    for (const id of dayIds) {
+      const row = screen.getAllByText(nameOf(id))[0].closest('.lec-row') as HTMLElement;
+      expect(row.className).toContain('lec-row');
+      expect(row.textContent).toContain(nameOf(id));
+      expect(row.lastElementChild).toBe(boxes.find((b) => b.closest('.lec-row') === row));
+    }
   });
 
-  it('auto-advances to the next row when the open row is ticked', async () => {
+  it('ticking a row removes it - the list never grows, and no future lecture slides in', async () => {
     await boot();
     await importDemo();
     await screen.findByText(/Today we.re studying/);
 
     const state = () => useAppStore.getState();
-    const dayIds = state().scheduleByDate.get(state().planConfig.startDate)!.lectureIds;
-    expect(dayIds.length).toBeGreaterThanOrEqual(2);
-    const [a, b] = dayIds;
+    const day = state().scheduleByDate.get(state().planConfig.startDate)!;
+    expect(day.lectureIds.length).toBeGreaterThanOrEqual(2);
+    const [a, b] = day.lectureIds;
+    const lastId = day.lectureIds[day.lectureIds.length - 1];
     const nameOf = (id: string) => state().lectureIndex.get(id)!.lecture.name;
-    const openName = () => document.querySelector('.lecture.acc.open .acc-name')!.textContent;
-    expect(openName()).toBe(nameOf(a));
 
-    // One tap on the single "Done" box: the lecture leaves the schedule and
-    // the accordion advances to the next one - no reload, no remount.
-    fireEvent.click(
-      within(document.querySelector('.lecture.acc.open') as HTMLElement).getByRole('checkbox'),
-    );
-    await waitFor(() => expect(openName()).toBe(nameOf(b)));
-    expect(document.querySelectorAll('.lecture.acc.open')).toHaveLength(1);
+    // A lecture from a LATER study day must NOT be visible on Today.
+    const laterDay = state().schedule.find(
+      (d) => d.type === 'study' && d.date !== state().planConfig.startDate,
+    )!;
+    const futureName = nameOf(laterDay.lectureIds[0]);
+    expect(screen.queryByText(futureName)).toBeNull();
+
+    // One tap on the square box: the lecture leaves the list and NOTHING
+    // replaces it - the rest of the fixed day set remains, in order.
+    const row = screen.getAllByText(nameOf(a))[0].closest('.lec-row') as HTMLElement;
+    fireEvent.click(within(row).getByRole('checkbox'));
+    await waitFor(() => expect(state().progress[a]?.lectureWatched).toBe(true));
+    const card = () => document.querySelector('.study-card') as HTMLElement;
+    await waitFor(() => expect(within(card()).queryByText(nameOf(a))).toBeNull());
+    expect(within(card()).getByText(nameOf(b))).toBeTruthy();
+    expect(within(card()).getByText(nameOf(lastId))).toBeTruthy();
+    // Still no future lecture has slid in.
+    expect(within(card()).queryByText(futureName)).toBeNull();
 
     // The finished lecture shows up in the "Done today" summary with its box
     // pre-ticked (watched + notes came together).
@@ -259,13 +284,11 @@ describe('today screen', () => {
     );
     const doneRow = within(document.querySelector('.done-list') as HTMLElement)
       .getByText(nameOf(a))
-      .closest('.lecture') as HTMLElement;
+      .closest('.lec-row') as HTMLElement;
     const box = within(doneRow).getByRole('checkbox') as HTMLInputElement;
     expect(box.checked).toBe(true);
     expect(state().progress[a]?.lectureWatched).toBe(true);
     expect(state().progress[a]?.notesDone).toBe(true);
-    expect(openName()).toBe(nameOf(b));
-    expect(document.querySelectorAll('.lecture.acc.open')).toHaveLength(1);
   });
 
   it('shows "Done today" as a one-line summary that expands on tap', async () => {
@@ -455,30 +478,7 @@ describe('timeline screen', () => {
     expect(decCells.indexOf(dec1 as HTMLElement)).toBe(2);
   });
 
-  /** Expected Questions checkboxes for a study day, per the unlock rule. */
-  function expectedTopicCheckboxes(date: string): number {
-    const st = useAppStore.getState();
-    const day = st.schedule.find((d) => d.date === date)!;
-    const dayTopics = new Set(day.lectureIds.map((id) => st.lectureIndex.get(id)!.topic.id));
-    let n = 0;
-    for (const sub of st.curriculum) {
-      for (const t of sub.topics) {
-        if (!dayTopics.has(t.id)) continue;
-        if (
-          topicQuestionsUnlocked(
-            topicActiveLectureIds(t, st.scheduleByLecture, st.progress),
-            st.scheduleByLecture,
-            date,
-          )
-        ) {
-          n++;
-        }
-      }
-    }
-    return n;
-  }
-
-  it('uses the same accordion in the day detail modal (one open row)', async () => {
+  it('the day detail modal lists the day FIXED set with checkboxes and a watched count - no Questions', async () => {
     await boot();
     await importDemo();
     fireEvent.click(await screen.findByRole('button', { name: /Timeline/ }));
@@ -486,32 +486,34 @@ describe('timeline screen', () => {
     expect(cells.length).toBeGreaterThan(0);
     fireEvent.click(cells[0] as HTMLElement);
     const dialog = (await screen.findByRole('dialog')) as HTMLElement;
-    expect(dialog.querySelectorAll('.lecture.acc.open')).toHaveLength(1);
-    // The Questions checkbox stays a single per-topic control in the header -
-    // present only for topics that reach their LAST scheduled lecture on this
-    // day (a topic split across days is not confirmable on an early day).
-    const firstDay = useAppStore.getState().schedule.find((d) => d.type === 'study')!.date;
-    expect(dialog.querySelectorAll('.topic-block').length).toBeGreaterThan(0);
-    // The demo's first topic spans two days, so day one shows NO checkbox.
-    expect(expectedTopicCheckboxes(firstDay)).toBe(0);
-    expect(
-      within(dialog).queryAllByRole('checkbox', { name: /Questions done for / }).length,
-    ).toBe(expectedTopicCheckboxes(firstDay));
 
-    // The NEXT study day is the topic's last day: its checkbox appears there.
-    const foot = dialog.querySelector('.modal-foot') as HTMLElement;
-    fireEvent.click(within(foot).getByRole('button', { name: 'Close' }));
-    fireEvent.click(cells[1] as HTMLElement);
-    const dialog2 = (await screen.findByRole('dialog')) as HTMLElement;
-    const secondDay = useAppStore.getState().schedule.filter((d) => d.type === 'study')[1].date;
-    expect(expectedTopicCheckboxes(secondDay)).toBe(1);
+    // Every lecture the plan assigned to that date is listed, each with its
+    // own square checkbox - and Questions live in the Revision tab, not here.
+    const firstDay = useAppStore.getState().schedule.find((d) => d.type === 'study')!;
+    const names = firstDay.lectureIds.map(
+      (id) => useAppStore.getState().lectureIndex.get(id)!.lecture.name,
+    );
+    for (const name of names) expect(within(dialog).getByText(name)).toBeTruthy();
     expect(
-      within(dialog2).queryAllByRole('checkbox', { name: /Questions done for / }).length,
-    ).toBe(expectedTopicCheckboxes(secondDay));
+      within(dialog).queryAllByRole('checkbox', { name: /Mark watched: / }).length,
+    ).toBe(names.length);
+    expect(within(dialog).getByText(/watched 0\//)).toBeTruthy();
+    expect(within(dialog).queryAllByRole('checkbox', { name: /Questions done for / })).toHaveLength(0);
+    // No accordion anywhere in the modal either.
+    expect(dialog.querySelector('.lecture.acc')).toBeNull();
+
+    // Ticking a box in the modal marks the lecture done on its fixed day.
+    const someId = firstDay.lectureIds[0];
+    const someName = useAppStore.getState().lectureIndex.get(someId)!.lecture.name;
+    const someRow = within(dialog)
+      .getByText(someName)
+      .closest('.lec-row') as HTMLElement;
+    fireEvent.click(within(someRow).getByRole('checkbox'));
+    expect(useAppStore.getState().progress[someId]?.lectureWatched).toBe(true);
   });
 });
 
-describe('topic questions (cross-day)', () => {
+describe('questions live in the revision tab (not the homepage)', () => {
   const SPLIT = JSON.stringify({
     'Split Subject': {
       instructor: 'Dr S',
@@ -528,7 +530,7 @@ describe('topic questions (cross-day)', () => {
     },
   });
 
-  it('hides the checkbox on partial days and ticks the whole topic on the last day', async () => {
+  it('a topic appears once watched, one tick covers the whole topic, only watched lectures queue', async () => {
     await boot();
     useAppStore.getState().importCurriculum(SPLIT);
     // 2h lectures, 3h day, 1x speed -> one lecture per day: the topic spans three days.
@@ -537,28 +539,27 @@ describe('topic questions (cross-day)', () => {
     const ids = state.schedule.filter((d) => d.type === 'study').map((d) => d.lectureIds[0]);
     expect(ids).toHaveLength(3);
 
+    // Nothing watched yet: the section exists but has no topics.
     await screen.findByText(/Today we.re studying/);
-    // Day one: the topic is not finished yet, so there is no checkbox to lie
-    // about - it is not rendered at all.
-    expect(screen.queryByText('Questions for this topic')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Revision/ }));
+    expect(await screen.findByText('Questions by topic')).toBeTruthy();
+    expect(screen.queryByRole('checkbox', { name: 'Questions done for Big Topic' })).toBeNull();
 
-    // The topic's LAST day (opened in the Timeline) is where the checkbox lives.
-    const lastDay = state.scheduleByLecture.get(ids[2])!;
-    fireEvent.click(screen.getByRole('button', { name: /Timeline/ }));
-    const cell = [...document.querySelectorAll('.day-cell.has-plan')].find(
-      (c) => (c as HTMLElement).title!.startsWith(formatDate(lastDay)),
-    ) as HTMLElement;
-    fireEvent.click(cell);
-    const dialog = await screen.findByRole('dialog');
-    const box = within(dialog).getByRole('checkbox', { name: 'Questions done for Big Topic' });
+    // Watch L1 (its fixed day is today) - the topic now appears in the section.
+    state.setFlags(ids[0], { lectureWatched: true, notesDone: true });
+    const box = await screen.findByRole('checkbox', { name: 'Questions done for Big Topic' });
 
-    // One tick covers the WHOLE topic - including L1/L2, which are not in
-    // this day's slice (the old bug ticked them invisibly; now it is a single
-    // deliberate action that is also VISIBLE on the day it applies).
+    // One tick covers the WHOLE topic - including L2/L3, which are scheduled on
+    // LATER days (a single deliberate action, wherever the topic sits).
     fireEvent.click(box);
     const after = useAppStore.getState();
     for (const id of ids) expect(after.progress[id]?.questionsDone).toBe(true);
     expect((box as HTMLInputElement).checked).toBe(true);
+    // L1 is watched + notes + questions -> it enters the queue. L2/L3 are not
+    // watched yet, so they stay out until they are.
+    expect(after.revision[ids[0]]).toBeTruthy();
+    expect(after.revision[ids[1]]).toBeUndefined();
+    expect(after.revision[ids[2]]).toBeUndefined();
   });
 });
 
@@ -635,7 +636,7 @@ describe('plan screen', () => {
     expect(useAppStore.getState().progress).toEqual({});
   });
 
-  it('bulk-marks a subject done and shrinks the plan', async () => {
+  it('bulk-marks a subject done - the fixed plan keeps its days, the remaining count drops', async () => {
     await boot();
     await importDemo();
     await openMenu();
@@ -649,11 +650,15 @@ describe('plan screen', () => {
 
     const state = useAppStore.getState();
     const subject = state.curriculum[0];
+    const totalInSubject = subject.topics.reduce((n, t) => n + t.lectures.length, 0);
     const watchedCount = Object.values(state.progress).filter((p) => p.lectureWatched).length;
-    expect(watchedCount).toBe(
-      subject.topics.reduce((n, t) => n + t.lectures.length, 0),
-    );
-    expect(state.schedule.some((d) => d.subjectId === subject.id)).toBe(false);
+    expect(watchedCount).toBe(totalInSubject);
+    // The calendar is FIXED: the subject's days still exist (now fully done),
+    // so the plan neither shrinks nor stretches.
+    expect(state.schedule.some((d) => d.subjectId === subject.id)).toBe(true);
+    // But the remaining work reflects what is watched.
+    const stats = computePlanStats(state.schedule, state.progress);
+    expect(stats.remainingLectures).toBe(767 - totalInSubject);
     expect(await screen.findByText(/Updated \d+ lectures/)).toBeTruthy();
   });
 });

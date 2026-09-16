@@ -199,58 +199,60 @@ describe('plan & scheduling flows', () => {
 /* ================================ Today screen =============================== */
 
 describe('today screen flows', () => {
-  it('shows exactly today scheduled lectures - no more, no less - and updates live', async () => {
+  it('shows exactly today scheduled lectures - the day is a fixed set that only shrinks', async () => {
     const { store, unmount } = await launchWithDemo();
     const state = () => store.getState();
     const today = state().planConfig.startDate;
     const nameOf = (id: string) => state().lectureIndex.get(id)!.lecture.name;
+    const baseList = state()
+      .scheduleByDate.get(today)!
+      .lectureIds.map((id) => state().lectureIndex.get(id)!.lecture.name);
 
     const rendered = () =>
-      [...document.querySelectorAll('.study-card .acc-name')].map((e) => e.textContent);
-    const current = () =>
-      state().scheduleByDate.get(today)!.lectureIds.map((id) => state().lectureIndex.get(id)!.lecture.name);
-    expect(rendered()).toEqual(current());
+      [...document.querySelectorAll('.study-card .lec-row-name')].map((e) => e.textContent);
+    expect(rendered()).toEqual(baseList);
 
-    // Tick the first lecture: it leaves the list (the day refills from the
-    // queue, so the day keeps its capacity) and appears in "done today".
+    // Tick the first lecture: it leaves the list and appears in "done
+    // today". The day does NOT refill - the list is the original fixed set
+    // minus the watched ones, and the plan keeps its exact shape.
     const firstId = state().scheduleByDate.get(today)!.lectureIds[0];
-    const row = screen.getAllByText(nameOf(firstId))[0].closest('.lecture') as HTMLElement;
+    const row = screen.getAllByText(nameOf(firstId))[0].closest('.lec-row') as HTMLElement;
     fireEvent.click(within(row).getByRole('checkbox'));
     await waitFor(() =>
-      expect(state().scheduleByDate.get(today)!.lectureIds[0]).not.toBe(firstId),
+      expect(rendered()).toEqual(baseList.slice(1)),
     );
-    expect(rendered()).toEqual(current()); // still EXACTLY today's schedule
+    expect(state().scheduleByDate.get(today)!.lectureIds).toContain(firstId); // still on its fixed day
     expect(await screen.findByText(/watched today/)).toBeTruthy();
     unmount();
   });
 
-  it('accordion: one open row, auto-advance on completion, manual tap still works', async () => {
+  it('flat rows: name left, square checkbox right, one per lecture - tapping the row ticks it', async () => {
     const { store, unmount } = await launchWithDemo();
     const state = () => store.getState();
     const today = state().planConfig.startDate;
     const ids = state().scheduleByDate.get(today)!.lectureIds;
     expect(ids.length).toBeGreaterThanOrEqual(3);
     const nameOf = (id: string) => state().lectureIndex.get(id)!.lecture.name;
-    const openName = () => document.querySelector('.lecture.acc.open .acc-name')!.textContent!;
 
-    // Exactly one row open, on the first not-fully-done lecture.
-    expect(document.querySelectorAll('.lecture.acc.open')).toHaveLength(1);
-    expect(openName()).toBe(nameOf(ids[0]));
+    // One square checkbox per lecture, no accordion nodes anywhere.
+    const boxes = screen.getAllByRole('checkbox', { name: /Mark watched: / });
+    expect(boxes).toHaveLength(ids.length);
+    expect(document.querySelector('.lecture.acc')).toBeNull();
+    for (const id of ids) {
+      const row = screen.getAllByText(nameOf(id))[0].closest('.lec-row') as HTMLElement;
+      expect(row.className).toContain('lec-row');
+      // The checkbox is the row's last element - i.e. on the right.
+      expect(row.lastElementChild).toBeInstanceOf(HTMLInputElement);
+    }
 
-    // Manual tap expands a collapsed row (and closes the auto one).
-    const secondRow = screen.getAllByText(nameOf(ids[1]))[0].closest('.lecture') as HTMLElement;
-    fireEvent.click(secondRow);
-    await waitFor(() => expect(openName()).toBe(nameOf(ids[1])));
-    expect(document.querySelectorAll('.lecture.acc.open')).toHaveLength(1);
-
-    // Completing the row auto-advances: the completed lecture leaves the
-    // list (the day refills from the queue), and the first remaining
-    // unfinished lecture becomes the open row again. (Re-query the row: on
-    // expand the collapsed <button> node is replaced by the open <div>.)
-    const openRow = () => document.querySelector('.lecture.acc.open') as HTMLElement;
-    fireEvent.click(within(openRow()).getByRole('checkbox'));
-    await waitFor(() => expect(openName()).toBe(nameOf(ids[0])));
-    expect(document.querySelectorAll('.lecture.acc.open')).toHaveLength(1);
+    // Tapping anywhere on the row (even the name) ticks the box - and the
+    // lecture leaves the list; the rest of the fixed day set stays.
+    fireEvent.click(screen.getAllByText(nameOf(ids[1]))[0]);
+    await waitFor(() => expect(state().progress[ids[1]]?.lectureWatched).toBe(true));
+    await waitFor(() =>
+      expect(document.querySelectorAll('.study-card .lec-row')).toHaveLength(ids.length - 1),
+    );
+    expect(screen.getByText(nameOf(ids[0]))).toBeTruthy();
     unmount();
   });
 
@@ -365,25 +367,24 @@ describe('today screen flows', () => {
     unmount();
   });
 
-  it('the finished-for-today box appears, pops once, survives a real reopen without re-popping, and clears on untick', async () => {
+  it('finishing today ENDS today: the box appears, pops once, survives a real reopen, and clears on untick', async () => {
     const { store, unmount } = await launchWithDemo();
     const state = () => store.getState();
     const today = state().planConfig.startDate;
     const ids = state().scheduleByDate.get(today)!.lectureIds;
     expect(ids.length).toBeGreaterThan(0);
 
-    // Watch everything the plan assigned to today, through the UI. The live
-    // list refills as each lecture is watched (compaction) - so the box can
-    // only be measured against the day's baseline, and must appear after the
-    // last tick even though the list now holds the next day's lectures.
+    // Watch everything the plan assigned to today, through the UI. Each tick
+    // only REMOVES a lecture from the list (the day is a fixed set) - and
+    // when the last one is gone the day simply ends.
     for (let i = 0; i < ids.length; i++) {
-      const open = document.querySelector('.lecture.acc.open') as HTMLElement;
-      fireEvent.click(within(open).getByRole('checkbox'));
-      if (i < ids.length - 1) {
-        await waitFor(() => expect(document.querySelectorAll('.lecture.acc.open')).toHaveLength(1));
-      }
+      const firstRow = document.querySelector('.study-card .lec-row') as HTMLElement;
+      fireEvent.click(within(firstRow).getByRole('checkbox'));
+      await waitFor(() =>
+        expect(document.querySelectorAll('.study-card .lec-row')).toHaveLength(ids.length - i - 1),
+      );
     }
-    const box = await screen.findByText(/Everything planned for today is watched/);
+    const box = await screen.findByText(/Everything for today is watched/);
     const boxEl = box.closest('.ok-box') as HTMLElement;
     // First time the day becomes done, in THIS visit -> the pop class.
     expect(boxEl.className).toContain('pop');
@@ -394,21 +395,23 @@ describe('today screen flows', () => {
     await waitFor(() => expect(document.documentElement.dataset.theme).toBe('light'));
     expect(document.body.contains(boxEl)).toBe(true);
 
-    // Untick one lecture (from "watched today") -> the state goes away.
+    // Untick one lecture (from "watched today") -> the state goes away and
+    // the lecture is back in today's (fixed) list.
     fireEvent.click(await screen.findByText(/watched today/));
-    const doneBox = document.querySelector('.done-list .lecture') as HTMLElement;
-    const undoneName = doneBox.querySelector('.lecture-name')!.textContent!;
+    const doneBox = document.querySelector('.done-list .lec-row') as HTMLElement;
+    const undoneName = doneBox.querySelector('.lec-row-name')!.textContent!;
     fireEvent.click(within(doneBox).getByRole('checkbox'));
     await waitFor(() => expect(document.body.contains(boxEl)).toBe(false));
+    expect(
+      document.querySelector('.study-card .lec-row')!.textContent,
+    ).toContain(undoneName);
 
-    // Watch it again (it is back in today's list) so the day is done, then
-    // close the app for real: let the debounced flush write, unmount, and
-    // relaunch a fresh app.
-    const backRow = [...document.querySelectorAll('.study-card .lecture')]
-      .find((el) => el.textContent!.includes(undoneName)) as HTMLElement;
+    // Watch it again so the day is done, then close the app for real: let
+    // the debounced flush write, unmount, and relaunch a fresh app.
+    const backRow = document.querySelector('.study-card .lec-row') as HTMLElement;
     fireEvent.click(within(backRow).getByRole('checkbox'));
     await waitFor(() =>
-      expect(screen.queryByText(/Everything planned for today is watched/)).toBeTruthy(),
+      expect(screen.queryByText(/Everything for today is watched/)).toBeTruthy(),
     );
     await act(async () => {
       await new Promise((r) => setTimeout(r, 600)); // settle the 400ms debounce
@@ -416,16 +419,16 @@ describe('today screen flows', () => {
     unmount();
 
     const again = await relaunch(store); // true reopen: hydrates from storage
-    const box2 = await screen.findByText(/Everything planned for today is watched/);
+    const box2 = await screen.findByText(/Everything for today is watched/);
     const boxEl2 = box2.closest('.ok-box') as HTMLElement;
     // The state PERSISTED (box on reopen) but WITHOUT the pop class: a
-    // reopen starts already done, so it must not re-celebrate.
+    // reopen starts already done, so it must not re-celebrate. And the
+    // fixed day list is still fully watched on the stored plan.
     expect(boxEl2.className).not.toContain('pop');
-    // And the persisted baseline is exactly the day's original list.
-    const savedPlan = JSON.parse(localStorage.getItem('norcet:planConfig')!) as {
-      dayBasis: Record<string, string[]>;
-    };
-    expect(savedPlan.dayBasis[today]).toEqual(ids);
+    const saved = store.getState();
+    const savedDay = saved.scheduleByDate.get(today)!;
+    expect(savedDay.lectureIds).toEqual(ids);
+    for (const id of ids) expect(saved.progress[id]?.lectureWatched).toBe(true);
     again.unmount();
   });
 
@@ -548,13 +551,17 @@ describe('revision flows', () => {
     expect(state().revision).toEqual({});
 
     // Merged checkbox only (watched + notes): NOT enough.
-    const row = screen.getAllByText('Only Lecture')[0].closest('.lecture') as HTMLElement;
+    const row = screen.getAllByText('Only Lecture')[0].closest('.lec-row') as HTMLElement;
     fireEvent.click(within(row).getByRole('checkbox'));
     expect(state().progress[id]).toMatchObject({ lectureWatched: true, notesDone: true, questionsDone: false });
     expect(state().revision).toEqual({});
 
-    // Topic Questions (same-day topic -> checkbox is present): now it queues.
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Questions done for Only Topic' }));
+    // Topic Questions live in the Revision tab (the homepage tracks
+    // lectures only): open the tab and tick the topic there - now it queues.
+    await screen.findByText(/Today we.re studying/);
+    fireEvent.click(bottomNav().getByRole('button', { name: /Revision/ }));
+    await screen.findByText('Questions by topic');
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Questions done for Only Topic' }));
     await waitFor(() => expect(Object.keys(state().revision).length).toBe(1));
     const item = state().revision[id];
     expect(item.intervalStage).toBe(0);

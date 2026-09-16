@@ -137,6 +137,17 @@ export function generateSchedule(
     if (!lastDate || date > lastDate) lastDate = date;
   };
 
+  // Two plan shapes, one packer:
+  //  - NORMAL (no backlogAnchor): a STATIC calendar. Every lecture of the
+  //    included subjects gets its scheduled date, watched or not. Watching
+  //    never re-packs the plan - it only marks lectures done - so a finished
+  //    day stays finished: today ends when today's own lectures are watched,
+  //    and nothing from tomorrow slides in to replace them.
+  //  - CATCH-UP (backlogAnchor set by "shift the schedule"): re-spread only
+  //    the REMAINING (unwatched) lectures from the anchor date, the way the
+  //    Backlog tab promises.
+  const reSpread = Boolean(planConfig.backlogAnchor);
+
   for (const subjectId of planConfig.subjectOrder) {
     const subject = subjectById.get(subjectId);
     if (!subject) continue;
@@ -144,13 +155,11 @@ export function generateSchedule(
     const remaining: { lecture: Lecture; eff: number }[] = [];
     for (const topic of subject.topics) {
       for (const lecture of topic.lectures) {
-        if (!isRemaining(progress, lecture.id)) continue;
+        if (reSpread && !isRemaining(progress, lecture.id)) continue;
         if (offDayLectureSet.has(lecture.id)) continue; // waiting on its off day
         remaining.push({ lecture, eff: Math.ceil(lecture.durationSec / speed) });
       }
     }
-    // A fully completed subject contributes zero days AND zero buffer days:
-    // there is nothing left to buffer after.
     if (remaining.length === 0) continue;
 
     let i = 0;
@@ -245,6 +254,7 @@ export function generateSchedule(
         return ref ? { subjectId: ref.subject.id, subjectName: ref.subject.name } : null;
       },
       mark,
+      progress,
     );
   }
 
@@ -331,6 +341,7 @@ export function applyDayHourOverrides(
   lectureEff: Map<string, number>,
   subjectOf: (lectureId: string) => { subjectId: string; subjectName: string } | null,
   onMark: (date: string, day: Assigned) => void,
+  progress: ProgressStore = {},
 ): void {
   const effOf = (id: string) => lectureEff.get(id) ?? 0;
   const loadOf = (ids: string[]) => ids.reduce((n, id) => n + effOf(id), 0);
@@ -351,6 +362,10 @@ export function applyDayHourOverrides(
   }
 
   const parked = new Set(Object.keys(planConfig.offDayLectures ?? {}));
+  // Watched lectures keep their done state - the week's re-pack redistributes
+  // only the unwatched pool, so a watched lecture can never reappear on a day.
+  const done = new Set<string>();
+  for (const [id, p] of Object.entries(progress)) if (p.lectureWatched) done.add(id);
 
   for (const weekStart of [...weeks].sort()) {
     // The week's study days, in date order (exactly the days the base plan
@@ -364,7 +379,7 @@ export function applyDayHourOverrides(
       if (
         hit &&
         hit.type === 'study' &&
-        hit.lectureIds.some((id) => !parked.has(id))
+        hit.lectureIds.some((id) => !parked.has(id) && !done.has(id))
       ) {
         weekDays.push(d);
       }
@@ -387,7 +402,9 @@ export function applyDayHourOverrides(
     // base plan's lectures for each run's days, minus anything deliberately
     // parked on an off day (parked lectures keep their spot).
     const blocks = runs.map((run) =>
-      run.days.flatMap((d) => base.get(d)!.lectureIds).filter((id) => !parked.has(id)),
+      run.days
+        .flatMap((d) => base.get(d)!.lectureIds)
+        .filter((id) => !parked.has(id) && !done.has(id)),
     );
 
     // The week's off day: the first off/leave day on/after the week's last
@@ -433,23 +450,27 @@ export function applyDayHourOverrides(
           if (used >= capSec) break;
         }
 
-        if (ids.length === 0) {
-          // Capped at zero: the day empties out and drops from the plan.
+        // Watched lectures stay PINNED to their day - the calendar is fixed,
+        // the re-pack only redistributes the unwatched pool around them.
+        const kept = base.get(d)!.lectureIds.filter((id) => done.has(id));
+        const finalIds = [...kept, ...ids];
+        if (finalIds.length === 0) {
+          // Capped at zero and nothing pinned: the day empties out.
           if (assigned.has(d)) assigned.delete(d);
         } else {
           const existing = assigned.get(d);
           if (existing) {
-            existing.lectureIds = ids;
-            existing.plannedSec = used;
+            existing.lectureIds = finalIds;
+            existing.plannedSec = loadOf(finalIds);
           } else {
-            const first = subjectOf(ids[0]);
+            const first = subjectOf(finalIds[0]);
             if (first) {
               onMark(d, {
                 type: 'study',
                 subjectId: first.subjectId,
                 subjectName: first.subjectName,
-                lectureIds: ids,
-                plannedSec: used,
+                lectureIds: finalIds,
+                plannedSec: loadOf(finalIds),
               });
             }
           }
