@@ -38,9 +38,15 @@ export type AppSettings = {
   theme: 'dark' | 'light';
   /** SHA-256 hash of the plan-screen password (see lib/lock.ts), or null. */
   planLockHash: string | null;
+  /** Streak milestones (5, 10, 15, ...) whose congratulations box was already shown. */
+  streakMilestonesSeen: number[];
 };
 
-export const DEFAULT_SETTINGS: AppSettings = { theme: 'dark', planLockHash: null };
+export const DEFAULT_SETTINGS: AppSettings = {
+  theme: 'dark',
+  planLockHash: null,
+  streakMilestonesSeen: [],
+};
 
 export function normalizeSettings(value: unknown): AppSettings {
   if (typeof value !== 'object' || value === null) return { ...DEFAULT_SETTINGS };
@@ -48,6 +54,11 @@ export function normalizeSettings(value: unknown): AppSettings {
   return {
     theme: v.theme === 'light' ? 'light' : 'dark',
     planLockHash: typeof v.planLockHash === 'string' && v.planLockHash.length > 0 ? v.planLockHash : null,
+    streakMilestonesSeen: Array.isArray(v.streakMilestonesSeen)
+      ? v.streakMilestonesSeen.filter(
+          (n): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 5,
+        )
+      : [],
   };
 }
 

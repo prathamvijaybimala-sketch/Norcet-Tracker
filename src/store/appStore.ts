@@ -88,6 +88,8 @@ export type AppState = {
   theme: 'dark' | 'light';
   /** Hash of the plan-screen password, or null when the plan is not locked. */
   planLockHash: string | null;
+  /** Streak milestones (5, 10, 15, ...) whose congratulations box was already shown. */
+  streakMilestonesSeen: number[];
   /** Session-only: true after the plan screen has been unlocked this launch. */
   planUnlocked: boolean;
 } & Derived;
@@ -141,6 +143,8 @@ type Actions = {
 
   /** Per-device preferences. */
   setTheme: (theme: 'dark' | 'light') => void;
+  /** Remember that a streak milestone's congratulations box was shown (once per milestone). */
+  markStreakMilestoneSeen: (milestone: number) => void;
   setPlanPassword: (password: string) => Promise<boolean>;
   checkPlanPassword: (password: string) => Promise<boolean>;
   clearPlanPassword: () => void;
@@ -236,7 +240,7 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
   const persist = () => {
-    const { versions, curriculum, planConfig, progress, revision, theme, planLockHash } = get();
+    const { versions, curriculum, planConfig, progress, revision, theme, planLockHash, streakMilestonesSeen } = get();
     if (versions.curriculum !== lastSaved.curriculum) {
       saveKeyDebounced(KEYS.curriculum, curriculum);
     }
@@ -250,7 +254,7 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
       saveKeyDebounced(KEYS.revision, revision);
     }
     if (settingsDirty) {
-      saveKeyDebounced(KEYS.settings, { theme, planLockHash });
+      saveKeyDebounced(KEYS.settings, { theme, planLockHash, streakMilestonesSeen });
       settingsDirty = false;
     }
     lastSaved = { ...versions };
@@ -306,6 +310,7 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
     toast: null,
     theme: 'dark',
     planLockHash: null,
+    streakMilestonesSeen: [],
     planUnlocked: false,
     ...EMPTY_DERIVED,
 
@@ -342,6 +347,7 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
         revision,
         theme: settings.theme,
         planLockHash: settings.planLockHash,
+        streakMilestonesSeen: settings.streakMilestonesSeen,
         planUnlocked: false, // the plan re-locks on every app launch
         versions,
         ...derive(curriculum, planConfig, progress),
@@ -718,6 +724,15 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
       commit({ revision: next }, { revision: true });
     },
 
+    markStreakMilestoneSeen(milestone) {
+      if (!Number.isInteger(milestone) || milestone < 5) return;
+      const seen = get().streakMilestonesSeen;
+      if (seen.includes(milestone)) return;
+      set({ streakMilestonesSeen: [...seen, milestone].sort((a, b) => a - b) });
+      settingsDirty = true;
+      persist();
+    },
+
     setTheme(theme) {
       set({ theme });
       settingsDirty = true;
@@ -837,6 +852,7 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
         route: 'import',
         theme: 'dark',
         planLockHash: null,
+        streakMilestonesSeen: [],
         planUnlocked: false,
         ...EMPTY_DERIVED,
       });

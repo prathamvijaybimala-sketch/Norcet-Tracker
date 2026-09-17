@@ -12,6 +12,7 @@ import { act, render, screen, fireEvent, waitFor, within } from '@testing-librar
 import type { ComponentType } from 'react';
 import { flushWrites } from '../src/lib/storage';
 import { formatDate } from '../src/lib/dates';
+import { doneMessageFor, nameForDay } from '../src/lib/dayFlavor';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { useAppStore as UseAppStore } from '../src/store/appStore';
@@ -355,23 +356,26 @@ describe('today screen flows', () => {
     unmount();
   });
 
-  it('greeting: collapsed by default, no date, tap reveals the quote, tap hides it', async () => {
+  it('greeting: always shows name, time-of-day line, daily line and the quote (no tap)', async () => {
     const { unmount } = await launchWithDemo();
     const greeting = document.querySelector('.greeting') as HTMLElement;
-    expect(greeting.className).not.toContain('expanded');
     // No date anywhere on the greeting line (the header already has it).
     expect(greeting.querySelector('.greeting-line')!.textContent).not.toMatch(
       /\b(0?[1-9]|1[0-9]|2[0-9]|3[01]) (Sep|Oct|Nov|Dec|Jan)\b/,
     );
-    // The quote text exists in the DOM (jsdom has no layout, so collapse is
-    // asserted by the class below, not by a measured height).
+    // The default name is in the saloni family (nickname roulette).
+    expect(greeting.querySelector('.greeting-line')!.textContent).toMatch(/Saloni|Shalu|Meloni/);
+    // The time-of-day line is present (one of the five variants).
+    const timeLine = greeting.querySelector('.greeting-time')!.textContent ?? '';
+    expect(
+      ['Good Morning', 'Good Afternoon', 'Good Evening', 'Good Night', 'Still up?'].some((t) =>
+        timeLine.startsWith(t),
+      ),
+    ).toBe(true);
+    // The daily "chalo padhte hai" line and the quote are always visible.
+    expect(greeting.querySelector('.greeting-line2')!.textContent!.length).toBeGreaterThan(5);
     const quote = document.querySelector('.greeting-quote')!;
     expect(quote.textContent!.length).toBeGreaterThan(10);
-
-    fireEvent.click(greeting);
-    await waitFor(() => expect((document.querySelector('.greeting') as HTMLElement).className).toContain('expanded'));
-    fireEvent.click(greeting);
-    await waitFor(() => expect((document.querySelector('.greeting') as HTMLElement).className).not.toContain('expanded'));
     unmount();
   });
 
@@ -392,7 +396,12 @@ describe('today screen flows', () => {
         expect(document.querySelectorAll('.study-card .lec-row')).toHaveLength(ids.length - i - 1),
       );
     }
-    const box = await screen.findByText(/Everything for today is watched/);
+    // The done box now carries one of the victory messages (stable per day).
+    const expectedBox = doneMessageFor(
+      today,
+      nameForDay(state().planConfig.studentName, today),
+    );
+    const box = await screen.findByText(expectedBox);
     const boxEl = box.closest('.ok-box') as HTMLElement;
     // First time the day becomes done, in THIS visit -> the pop class.
     expect(boxEl.className).toContain('pop');
@@ -419,7 +428,7 @@ describe('today screen flows', () => {
     const backRow = document.querySelector('.study-card .lec-row') as HTMLElement;
     fireEvent.click(within(backRow).getByRole('checkbox'));
     await waitFor(() =>
-      expect(screen.queryByText(/Everything for today is watched/)).toBeTruthy(),
+      expect(screen.queryByText(expectedBox)).toBeTruthy(),
     );
     await act(async () => {
       await new Promise((r) => setTimeout(r, 600)); // settle the 400ms debounce
@@ -427,7 +436,7 @@ describe('today screen flows', () => {
     unmount();
 
     const again = await relaunch(store); // true reopen: hydrates from storage
-    const box2 = await screen.findByText(/Everything for today is watched/);
+    const box2 = await screen.findByText(expectedBox);
     const boxEl2 = box2.closest('.ok-box') as HTMLElement;
     // The state PERSISTED (box on reopen) but WITHOUT the pop class: a
     // reopen starts already done, so it must not re-celebrate. And the

@@ -11,12 +11,13 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import App from '../src/App';
 import { useAppStore } from '../src/store/appStore';
-import { addDays, dayOfYear, isISODate, todayISO } from '../src/lib/dates';
+import { addDays, dayOfYear, isISODate, todayISO, weekdayOf } from '../src/lib/dates';
+import { DONE_MESSAGES, nameForDay } from '../src/lib/dayFlavor';
 import { nextOffDayOnOrAfter } from '../src/lib/schedule';
 import { computePlanStats } from '../src/lib/stats';
 import { STUDY_QUOTES } from '../src/lib/quotes';
 import { makeSubjects, hours } from './helpers';
-import type { PlanConfig } from '../src/types';
+import type { PlanConfig, ProgressStore } from '../src/types';
 
 /** Native-platform export path: flipped per test (defaults to the web path). */
 const capMock = vi.hoisted(() => ({
@@ -1048,24 +1049,30 @@ describe('side menu and data screen', () => {
 });
 
 describe('greeting and theme', () => {
-  it('shows only the greeting line by default (no date), tap reveals the quote', async () => {
+  it('always shows the name line, time-of-day line, daily line and quote (no tap)', async () => {
     await boot();
     await importDemo();
     await screen.findByText(/Today we.re studying/);
 
     const greeting = document.querySelector('.greeting') as HTMLElement;
-    // Collapsed by default: just the greeting line, no date line.
-    expect(greeting.className).not.toContain('expanded');
     const line = document.querySelector('.greeting-line');
     expect(line).toBeTruthy();
     expect(line!.textContent).toMatch(/Hiiii|Hey|Hello|Namaste|Hi/);
     expect(line!.textContent).not.toMatch(/\bSep\b/); // no date in the greeting
-    expect(document.querySelector('.greeting-sub')).toBeNull();
-    expect(document.querySelector('.greeting-quote')).toBeTruthy();
-
-    // Tap reveals the quote; tapping again collapses it.
-    fireEvent.click(greeting);
-    expect(greeting.className).toContain('expanded');
+    // Default name = the saloni family (nickname roulette, stable per day).
+    expect(line!.textContent).toMatch(/Saloni|Shalu|Meloni/);
+    // Time-of-day line is present.
+    const timeLine = greeting.querySelector('.greeting-time')!.textContent ?? '';
+    expect(
+      ['Good Morning', 'Good Afternoon', 'Good Evening', 'Good Night', 'Still up?'].some((t) =>
+        timeLine.startsWith(t),
+      ),
+    ).toBe(true);
+    // Daily line + quote are always visible, nothing collapsed.
+    expect((document.querySelector('.greeting-line2')!.textContent ?? '').length).toBeGreaterThan(5);
+    const quote = document.querySelector('.greeting-quote')!.textContent ?? '';
+    expect(quote.length).toBeGreaterThan(10);
+    // Tapping the card does nothing (no expand state anymore).
     fireEvent.click(greeting);
     expect(greeting.className).not.toContain('expanded');
   });
@@ -1081,13 +1088,8 @@ describe('greeting and theme', () => {
     expect(quote).toContain(expected.text);
     expect(quote.startsWith('“')).toBe(true);
 
-    // Collapsed by default; tap-toggle both ways.
-    const card = document.querySelector('.greeting') as HTMLElement;
-    expect(card.className).not.toContain('expanded');
-    fireEvent.click(card);
-    expect(card.className).toContain('expanded');
-    fireEvent.click(card);
-    expect(card.className).not.toContain('expanded');
+    // The quote is always visible (no tap-to-expand anymore).
+    expect(document.querySelector('.greeting')!.className).not.toContain('expanded');
   });
 
   it('toggles between dark and light mode', async () => {
@@ -1106,7 +1108,8 @@ describe('greeting and theme', () => {
     await importDemo();
     await screen.findByText(/Today we.re studying/);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Set your name' }));
+    // The default name is saloni, so the pencil edits it.
+    fireEvent.click(screen.getByRole('button', { name: 'Edit your name' }));
     const dialog = await screen.findByRole('dialog');
     fireEvent.change(within(dialog).getByLabelText(/Shown in the daily greeting/), {
       target: { value: 'Priya' },
@@ -1115,7 +1118,99 @@ describe('greeting and theme', () => {
     await waitFor(() =>
       expect(useAppStore.getState().planConfig.studentName).toBe('Priya'),
     );
+    // A non-saloni name is shown as-is (no nickname roulette).
     expect(document.querySelector('.greeting-line')!.textContent).toContain('Priya');
+  });
+});
+
+describe('personal touches: streak, victory message, milestone', () => {
+  it('watching a lecture starts the streak; finishing the day shows a victory message', async () => {
+    await boot();
+    await importDemo();
+    const state = () => useAppStore.getState();
+    const today = todayISO();
+    if (weekdayOf(today) === 0) return; // Sunday: nothing to watch today
+    const day = state().scheduleByDate.get(today);
+    if (!day || day.type !== 'study' || day.lectureIds.length === 0) return;
+
+    // Nothing watched yet: no streak chip.
+    expect(document.querySelector('.greeting-streak')).toBeNull();
+
+    // Watch one lecture today: the streak chip appears.
+    state().setFlag(day.lectureIds[0], 'lectureWatched', true);
+    expect(await screen.findByText('1-day streak')).toBeTruthy();
+
+    // Finish the rest of today: the done box shows a victory message.
+    for (const id of day.lectureIds.slice(1)) state().setFlag(id, 'lectureWatched', true);
+    const name = nameForDay(state().planConfig.studentName, today);
+    await waitFor(() => {
+      const el = document.querySelector('.ok-box');
+      expect(el).toBeTruthy();
+      expect(
+        DONE_MESSAGES.some((m) => m.replace('{name}', name) === el!.textContent?.trim()),
+      ).toBe(true);
+    });
+  });
+
+  it('a 5-day streak fires the congratulations box once, then never again', async () => {
+    await boot();
+    await importDemo();
+    const state = () => useAppStore.getState();
+    const today = todayISO();
+    if (weekdayOf(today) === 0) return; // Sunday: the day cannot be "done"
+    const day = state().scheduleByDate.get(today);
+    if (!day || day.type !== 'study' || day.lectureIds.length === 0) return;
+
+    // Move the plan start back so there are EXACTLY four past study days
+    // (study days are Mon-Sat; Sundays are off and must not count).
+    let start = addDays(today, -1);
+    let found = 0;
+    while (found < 4) {
+      if (weekdayOf(start) !== 0) found++;
+      start = addDays(start, -1);
+    }
+    start = addDays(start, 1);
+    state().updatePlan({ startDate: start });
+
+    // One watched lecture on each of those past study days.
+    const progress: ProgressStore = { ...state().progress };
+    for (const d of state().schedule) {
+      if (d.type === 'study' && d.date < today && d.lectureIds.length > 0) {
+        const id = d.lectureIds[0];
+        progress[id] = {
+          lectureId: id,
+          lectureWatched: true,
+          notesDone: false,
+          questionsDone: false,
+          completedDate: d.date,
+        };
+      }
+    }
+    useAppStore.setState({ progress });
+
+    // Finish today: the streak reaches 5 and the milestone box appears.
+    const todayDay = state().scheduleByDate.get(today)!;
+    for (const id of todayDay.lectureIds) state().setFlag(id, 'lectureWatched', true);
+    expect(
+      await screen.findByText(/5 (days of study|din ki streak|days strong|days of showing up)/),
+    ).toBeTruthy();
+    expect(screen.getByText(/Pratham/)).toBeTruthy();
+    expect(state().streakMilestonesSeen).toContain(5);
+    expect(document.querySelector('.greeting-streak')).toBeTruthy();
+
+    // Dismiss it, go away and come back: never shown again for this milestone.
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(document.querySelector('.modal')).toBeNull();
+    const bottomBtn = (label: string) =>
+      [...document.querySelectorAll<HTMLElement>('.bottom-nav button')].find(
+        (b) => b.textContent?.includes(label),
+      ) as HTMLElement;
+    fireEvent.click(bottomBtn('Backlog'));
+    fireEvent.click(bottomBtn('Today'));
+    await screen.findByText(/Today we.re studying/);
+    expect(document.querySelector('.modal')).toBeNull();
+    // the done box is still there, quietly
+    expect(document.querySelector('.ok-box')).toBeTruthy();
   });
 });
 

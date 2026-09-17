@@ -199,7 +199,11 @@ export function normalizePlanConfig(plan: Record<string, unknown>): PlanConfig {
     startDate: isISODate(plan.startDate) ? plan.startDate : todayISO(),
     bufferCountsOffDays: plan.bufferCountsOffDays !== false,
     revisionIntervals: revisionIntervals.length ? revisionIntervals : [...DEFAULT_REVISION_INTERVALS],
-    studentName: typeof plan.studentName === 'string' ? plan.studentName : '',
+    // Default name is Saloni; an empty stored name means "never set".
+    studentName:
+      typeof plan.studentName === 'string' && plan.studentName.trim() !== ''
+        ? plan.studentName
+        : 'saloni',
     offDayLectures: isObject(plan.offDayLectures)
       ? (Object.fromEntries(
           Object.entries(plan.offDayLectures).filter(([, v]) => isISODate(v)),
@@ -228,7 +232,7 @@ export function defaultPlanConfig(startDate: string, subjectOrder: string[] = []
     startDate,
     bufferCountsOffDays: true,
     revisionIntervals: [...DEFAULT_REVISION_INTERVALS],
-    studentName: '',
+    studentName: 'saloni',
     offDayLectures: {},
     backlogAnchor: null,
     dayHours: {},

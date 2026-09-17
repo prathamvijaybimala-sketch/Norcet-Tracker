@@ -1395,7 +1395,7 @@ textarea {
    Tap reveals the day's quote; tap again collapses. No card box. */
 
 .greeting {
-  cursor: pointer;
+  cursor: default;
   padding: 2px 2px 0;
 }
 
@@ -1450,6 +1450,34 @@ textarea {
   font-size: 16.5px;
   line-height: 1.5;
   color: var(--text-dim);
+}
+
+/* Always-visible parts of the greeting card (time-of-day line, daily
+   "chalo padhte hai" line, streak chip) - no tap-to-expand anymore. */
+.greeting-time {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-top: 4px;
+}
+
+.greeting-line2 {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+.greeting-streak {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 700;
 }
 
 /* The app's one deliberate typographic accent - the same serif-italic as the

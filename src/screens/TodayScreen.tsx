@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useAppStore } from '../store/appStore';
 import { TopicSection } from '../components/TopicSection';
 import { Modal, ProgressBar, EmptyState } from '../components/ui';
@@ -6,13 +6,21 @@ import { completedOnDate, computeTodayStats, dayCompletion, missedLectures } fro
 import { dayOfYear, formatDate, todayISO } from '../lib/dates';
 import { formatDuration } from '../lib/duration';
 import { STUDY_QUOTES } from '../lib/quotes';
+import {
+  doneMessageFor,
+  greetingFor,
+  milestoneMessageFor,
+  nameForDay,
+  studyLineFor,
+} from '../lib/dayFlavor';
+import { computeStreak } from '../lib/streak';
 import { dueRevisions } from '../lib/revision';
 import { nextOffDayOnOrAfter } from '../lib/schedule';
 
 /**
  * Homepage. Deliberately quiet - one idea per block:
  *
- *   1. greeting (collapsed to a single line by default; tap reveals the quote)
+ *   1. greeting (name + time-of-day line + daily line + streak + quote, always visible)
  *   2. "Today: Xh" hours control (collapsed; soft per-day adjustment + Skip Day)
  *   3. "Today we're studying: <Subject>" (a plain sentence, not a stat header)
  *   4. topic -> lecture rows (one flat row: name left, square checkbox right)
@@ -34,37 +42,39 @@ const GREETINGS = ['Hiiii', 'Hey', 'Hello', 'Namaste', 'Hi'];
 const GREETING_EMOJIS = ['👋', '😊', '🙃', '😄', '☺️', '🙂'];
 
 /**
- * The daily greeting.
+ * The daily greeting. Everything is always visible (no tap-to-expand):
  *
- * COLLAPSED by default: just the greeting line (word + name + emoji) - the
- * date is deliberately NOT shown here, the app header already has it. Tapping
- * the line reveals the day's quote (one per day, seeded off the day-of-year
- * so it stays the same all day long) in the larger serif type; tapping again
- * collapses it. Tap-toggle only - no scroll-based behaviour.
- * Collapse state is local UI state only - never persisted.
+ *   1. "<random word> <name> <emoji>"  (name = daily nickname roulette)
+ *   2. time-of-day line: "Good Morning 🌅" etc.
+ *   3. the daily "chalo padhte hai" line (Hinglish, seeded per day)
+ *   4. the streak chip (🔥 N-day streak) once she has a streak
+ *   5. the day's quote, always visible in the serif type
  */
 function GreetingBox({ paceBadge }: { paceBadge: ReactNode }) {
   const planConfig = useAppStore((s) => s.planConfig);
   const updatePlan = useAppStore((s) => s.updatePlan);
+  const progress = useAppStore((s) => s.progress);
+  const schedule = useAppStore((s) => s.schedule);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
-  const [expanded, setExpanded] = useState(false);
 
   const now = new Date();
   const day = dayOfYear(now);
+  const today = todayISO();
   const greeting = GREETINGS[day % GREETINGS.length];
   const emoji = GREETING_EMOJIS[Math.floor(day / 2) % GREETING_EMOJIS.length];
-  const name = planConfig.studentName.trim();
+  // The name (with the daily nickname roulette) and the time-of-day line.
+  const name = nameForDay(planConfig.studentName, today);
+  const timeGreeting = greetingFor(now.getHours());
+  const line = studyLineFor(today, now.getHours());
   const quote = STUDY_QUOTES[day % STUDY_QUOTES.length];
-
-  const onCardClick = (e: React.MouseEvent) => {
-    // Taps on the pencil (or any control) do not toggle the card.
-    if (e.target instanceof Element && e.target.closest('button, a, input')) return;
-    setExpanded((v) => !v);
-  };
+  const streak = useMemo(
+    () => computeStreak(progress, schedule, today),
+    [progress, schedule, today],
+  );
 
   return (
-    <div className={`greeting ${expanded ? 'expanded' : ''}`} onClick={onCardClick}>
+    <div className="greeting">
       <div className="greeting-top">
         <div className="greeting-line">
           {greeting}
@@ -99,13 +109,21 @@ function GreetingBox({ paceBadge }: { paceBadge: ReactNode }) {
         </div>
         {paceBadge}
       </div>
-      <div className="greeting-collapse">
-        <div className="greeting-collapse-inner">
-          <div className="greeting-quote">
-            “{quote.text}”
-            {quote.author && quote.author !== 'Unknown' ? ` — ${quote.author}` : ''}
-          </div>
+      <div className="greeting-time">
+        {timeGreeting.text} <span aria-hidden>{timeGreeting.emoji}</span>
+      </div>
+      <div className="greeting-line2">{line}</div>
+      {streak > 0 ? (
+        <div
+          className="greeting-streak"
+          title="Days with at least one lecture watched in the app. Off days and rest days don't break it."
+        >
+          <span aria-hidden>🔥</span> {streak}-day streak
         </div>
+      ) : null}
+      <div className="greeting-quote">
+        “{quote.text}”
+        {quote.author && quote.author !== 'Unknown' ? ` — ${quote.author}` : ''}
       </div>
 
       {editing ? (
@@ -281,6 +299,10 @@ export function TodayScreen() {
   const lectureIndex = useAppStore((s) => s.lectureIndex);
   const catchUp = useAppStore((s) => s.catchUp);
   const setRoute = useAppStore((s) => s.setRoute);
+  const streakMilestonesSeen = useAppStore((s) => s.streakMilestonesSeen);
+  const markStreakMilestoneSeen = useAppStore((s) => s.markStreakMilestoneSeen);
+  /** Streak milestone (5, 10, 15, ...) box: shown once per milestone. */
+  const [milestoneShown, setMilestoneShown] = useState<number | null>(null);
   /** "Done today" starts as a one-line summary; tapping it expands the list. */
   const [doneOpen, setDoneOpen] = useState(false);
 
@@ -305,6 +327,21 @@ export function TodayScreen() {
   );
   const dayDone =
     day !== undefined && day.lectureIds.length > 0 && unwatchedIds.length === 0;
+
+  const streak = useMemo(
+    () => computeStreak(progress, schedule, today),
+    [progress, schedule, today],
+  );
+  // The day is over, the streak just hit a multiple of 5, and this milestone
+  // has not been celebrated yet.
+  const milestoneDue =
+    dayDone && streak >= 5 && streak % 5 === 0 && !streakMilestonesSeen.includes(streak);
+  useEffect(() => {
+    if (milestoneDue && milestoneShown !== streak) {
+      setMilestoneShown(streak);
+      markStreakMilestoneSeen(streak); // once, ever
+    }
+  }, [milestoneDue, streak, milestoneShown, markStreakMilestoneSeen]);
 
   // The pop should fire once, at the moment the day becomes done in THIS
   // visit. A reopen starts already done -> the box renders statically.
@@ -374,7 +411,10 @@ export function TodayScreen() {
                 className={`ok-box warm-copy${wasDoneAtMount.current ? '' : ' pop'}`}
                 style={{ marginTop: 14 }}
               >
-                Everything for today is watched - that&rsquo;s the day done. Nice.
+                {doneMessageFor(
+                  today,
+                  nameForDay(planConfig.studentName, today),
+                )}
               </div>
             ) : null}
           </>
@@ -458,6 +498,20 @@ export function TodayScreen() {
           </span>
           <span className="badge accent">Revise →</span>
         </button>
+      ) : null}
+
+      {milestoneShown !== null ? (
+        <Modal
+          title="Streak milestone 🏆"
+          onClose={() => setMilestoneShown(null)}
+          footer={
+            <button className="btn primary" onClick={() => setMilestoneShown(null)}>
+              Let&rsquo;s go! 🚀
+            </button>
+          }
+        >
+          <p className="small warm-copy">{milestoneMessageFor(milestoneShown)}</p>
+        </Modal>
       ) : null}
     </div>
   );
