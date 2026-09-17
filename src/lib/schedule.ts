@@ -11,8 +11,35 @@
  * calendar days. ~1000 lectures is a fraction of a millisecond.
  */
 
-import type { Lecture, PlanConfig, ProgressStore, ScheduleDay, Subject } from '../types';
+import type { Lecture, PlanConfig, ProgressStore, ScheduleDay, Subject, Topic } from '../types';
 import { addDays, diffDays, weekdayOf } from './dates';
+
+/**
+ * The topics of a subject in STUDY order: the user's drag-reordered list
+ * (`planConfig.topicOrder[subjectId]`, set from the "Mark done" tab) when
+ * present, otherwise the curriculum's order. Unknown/duplicate ids are
+ * dropped and topics missing from the list are appended at the end, so a
+ * stale or partial order can never lose a chapter.
+ */
+export function orderedTopics(subject: Subject, topicOrder: Record<string, string[]> | undefined): Topic[] {
+  const order = topicOrder?.[subject.id];
+  if (!order) return subject.topics;
+  const byId = new Map(subject.topics.map((t) => [t.id, t]));
+  const placed: Topic[] = [];
+  const used = new Set<string>();
+  for (const id of order) {
+    if (used.has(id)) continue;
+    const topic = byId.get(id);
+    if (topic) {
+      placed.push(topic);
+      used.add(id);
+    }
+  }
+  for (const topic of subject.topics) {
+    if (!used.has(topic.id)) placed.push(topic);
+  }
+  return placed;
+}
 
 /** A lecture only counts as "not yet done" if it has not been watched. */
 function isRemaining(progress: ProgressStore, id: string): boolean {
@@ -154,7 +181,7 @@ export function generateSchedule(
     if (!subject) continue;
 
     const remaining: { lecture: Lecture; eff: number }[] = [];
-    for (const topic of subject.topics) {
+    for (const topic of orderedTopics(subject, planConfig.topicOrder)) {
       for (const lecture of topic.lectures) {
         if (reSpread && !isRemaining(progress, lecture.id)) continue;
         // Marked "done" from the Plan tab = completed before using the app:

@@ -730,6 +730,130 @@ describe('mark done screen (bottom tab)', () => {
       state().curriculum.length - 1,
     );
   });
+
+  it('tapping a chapter opens its lectures; marking one lecture recalculates the plan', async () => {
+    await boot();
+    await importDemo();
+    const state = () => useAppStore.getState();
+
+    fireEvent.click(screen.getByRole('button', { name: /Mark done/ }));
+    await screen.findByText(/recalculates the plan without those lectures/);
+
+    const subject = state().curriculum.find(
+      (c) => c.id === state().planConfig.subjectOrder[0],
+    )!;
+    fireEvent.click(document.querySelector('.md-subject .md-subject-head') as HTMLElement);
+    const topic = subject.topics[0];
+
+    // Tapping the chapter row (not its checkbox) opens the individual lectures.
+    fireEvent.click(document.querySelector(`.md-topic[data-topic="${topic.id}"]`) as HTMLElement);
+    const lec = topic.lectures[0];
+    await screen.findByRole('checkbox', { name: `Mark lecture "${lec.name}" as already done` });
+    expect(
+      document.querySelectorAll(`.md-topic[data-topic="${topic.id}"] + .md-lectures .md-lecture`),
+    ).toHaveLength(topic.lectures.length);
+
+    // Mark a SINGLE lecture: only it leaves the plan, the chapter's other
+    // lectures keep their days.
+    const others = topic.lectures.slice(1);
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: `Mark lecture "${lec.name}" as already done` }),
+    );
+    await screen.findByText(/recalculates without them/);
+    expect(state().progress[lec.id]?.preDone).toBe(true);
+    expect(state().progress[lec.id]?.completedDate).toBeNull();
+    expect(state().schedule.every((d) => !d.lectureIds.includes(lec.id))).toBe(true);
+    expect(
+      others.every((l) => state().schedule.some((d) => d.lectureIds.includes(l.id))),
+    ).toBe(true);
+
+    // Untick it: the lecture goes straight back into the plan.
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: `Put lecture "${lec.name}" back into the plan` }),
+    );
+    await screen.findByText(/put back into the plan/);
+    expect(state().progress[lec.id]?.preDone).not.toBe(true);
+    expect(state().schedule.some((d) => d.lectureIds.includes(lec.id))).toBe(true);
+  });
+
+  it('holding the grip and dragging reorders a subject\'s chapters and re-packs the plan', async () => {
+    await boot();
+    await importDemo();
+    const state = () => useAppStore.getState();
+
+    fireEvent.click(screen.getByRole('button', { name: /Mark done/ }));
+    await screen.findByText(/recalculates the plan without those lectures/);
+    const subject = state().curriculum.find(
+      (c) => c.id === state().planConfig.subjectOrder[0],
+    )!;
+    fireEvent.click(document.querySelector('.md-subject .md-subject-head') as HTMLElement);
+    const topics = subject.topics;
+    expect(topics.length).toBeGreaterThanOrEqual(3);
+
+    // jsdom has no layout: hand each chapter row a 40px slot in DOM order.
+    const layoutRows = () => {
+      const rows = Array.from(
+        document.querySelectorAll<HTMLElement>('.md-topics .md-topic[data-topic]'),
+      );
+      rows.forEach((r, i) => {
+        const top = i * 40;
+        r.getBoundingClientRect = () =>
+          ({ top, bottom: top + 40, height: 40, width: 320, left: 0, right: 320, x: 0, y: top }) as DOMRect;
+      });
+      return rows;
+    };
+    layoutRows();
+
+    // Press the first chapter's grip and HOLD: after the hold threshold the
+    // drag goes live (its row is highlighted).
+    const rows = layoutRows();
+    const grip = rows[0].querySelector('.md-grip') as HTMLElement;
+    fireEvent.pointerDown(grip, { clientY: 20 });
+    await new Promise((r) => setTimeout(r, 400));
+    expect(rows[0].className).toContain('dragging');
+
+    // Drag onto the third slot (just below the third row's midpoint)...
+    layoutRows();
+    fireEvent.pointerMove(grip, { clientY: 101 });
+    const moved = layoutRows();
+    expect(moved.map((r) => r.dataset.topic)).toEqual([
+      topics[1].id,
+      topics[2].id,
+      topics[0].id,
+      ...topics.slice(3).map((t) => t.id),
+    ]);
+    // ...and release: the order is stored and the plan re-packs in it.
+    fireEvent.pointerUp(grip, { clientY: 101 });
+    expect(state().planConfig.topicOrder[subject.id]).toEqual([
+      topics[1].id,
+      topics[2].id,
+      topics[0].id,
+      ...topics.slice(3).map((t) => t.id),
+    ]);
+    const firstDay = state().schedule.find((d) => d.subjectId === subject.id);
+    const topicOf = new Map(subject.topics.flatMap((t) => t.lectures.map((l) => [l.id, t.id])));
+    expect(firstDay).toBeTruthy();
+    expect(topicOf.get(firstDay!.lectureIds[0])).toBe(topics[1].id); // new first chapter
+    // and the drag did not expand the chapter
+    expect(document.querySelectorAll('.md-lectures')).toHaveLength(0);
+
+    // A fresh tap on a chapter still opens its lectures (no reorder).
+    // After the reorder, the first row is the original topics[1].
+    const rows2 = layoutRows();
+    const target = rows2[0];
+    fireEvent.pointerDown(target, { clientY: 20 });
+    fireEvent.pointerUp(target, { clientY: 20 });
+    fireEvent.click(target);
+    expect(state().planConfig.topicOrder[subject.id]).toEqual([
+      topics[1].id,
+      topics[2].id,
+      topics[0].id,
+      ...topics.slice(3).map((t) => t.id),
+    ]);
+    await screen.findByRole('checkbox', {
+      name: `Mark lecture "${topics[1].lectures[0].name}" as already done`,
+    });
+  });
 });
 
 describe('revision screen', () => {

@@ -38,6 +38,13 @@ export type Subject = {
 export type PlanConfig = {
   /** Subject ids in the order they should be studied. Excluded subjects are absent. */
   subjectOrder: string[];
+  /**
+   * subjectId -> topic ids in the order the student wants to study them
+   * (reordered by dragging chapters in the "Mark done" tab). A subject
+   * that is absent (or has a stale/unknown id) keeps the curriculum's
+   * topic order, with any unknown ids ignored.
+   */
+  topicOrder: Record<string, string[]>;
   /** Hours of raw study per study day, e.g. 3. */
   dailyHours: number;
   /** Which weekdays are study days: 0 = Sunday .. 6 = Saturday. */

@@ -174,6 +174,15 @@ export function normalizePlanConfig(plan: Record<string, unknown>): PlanConfig {
       if (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 60) bufferDaysBySubject[k] = Math.round(v);
     }
   }
+  const topicOrder: Record<string, string[]> = {};
+  if (isObject(plan.topicOrder)) {
+    for (const [k, v] of Object.entries(plan.topicOrder)) {
+      if (Array.isArray(v)) {
+        const ids = v.filter((id): id is string => typeof id === 'string');
+        if (ids.length) topicOrder[k] = ids;
+      }
+    }
+  }
   const revisionIntervals = Array.isArray(plan.revisionIntervals)
     ? (plan.revisionIntervals as unknown[]).filter(
         (n): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 1,
@@ -181,6 +190,7 @@ export function normalizePlanConfig(plan: Record<string, unknown>): PlanConfig {
     : [];
   return {
     subjectOrder,
+    topicOrder,
     dailyHours,
     studyDays: studyDays.length ? studyDays : [1, 2, 3, 4, 5, 6],
     playbackSpeed,
@@ -209,6 +219,7 @@ export function normalizePlanConfig(plan: Record<string, unknown>): PlanConfig {
 export function defaultPlanConfig(startDate: string, subjectOrder: string[] = []): PlanConfig {
   return {
     subjectOrder,
+    topicOrder: {},
     dailyHours: 3,
     studyDays: [1, 2, 3, 4, 5, 6], // Mon-Sat
     playbackSpeed: 1.5,

@@ -103,6 +103,8 @@ type Actions = {
   updatePlan: (patch: Partial<PlanConfig>) => void;
   setSubjectOrder: (order: string[]) => void;
   moveSubject: (from: number, to: number) => void;
+  /** Set the study order of one subject's topics (drag-reorder, "Mark done" tab). Re-packs the plan. */
+  setTopicOrder: (subjectId: string, order: string[]) => void;
   setSubjectIncluded: (subjectId: string, included: boolean) => void;
   setBuffer: (subjectId: string, days: number) => void;
   toggleLeave: (date: string) => void;
@@ -475,6 +477,25 @@ export const useAppStore = create<AppState & Actions>((set, get) => {
       const [moved] = order.splice(from, 1);
       order.splice(to, 0, moved);
       get().updatePlan({ subjectOrder: order });
+    },
+
+    setTopicOrder(subjectId, order) {
+      const { curriculum, planConfig } = get();
+      const subject = curriculum.find((s) => s.id === subjectId);
+      if (!subject) return;
+      // Keep only ids of real topics, in the given order, de-duplicated;
+      // append any topics the list forgot so nothing is ever dropped.
+      const known = new Set(subject.topics.map((t) => t.id));
+      const seen = new Set<string>();
+      const clean = (Array.isArray(order) ? order : []).filter((id): id is string => {
+        if (typeof id !== 'string' || !known.has(id) || seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      });
+      for (const t of subject.topics) if (!seen.has(t.id)) clean.push(t.id);
+      const prev = planConfig.topicOrder[subjectId];
+      if (prev && prev.join('\u0000') === clean.join('\u0000')) return; // no-op: same order
+      get().updatePlan({ topicOrder: { ...planConfig.topicOrder, [subjectId]: clean } });
     },
 
     setSubjectIncluded(subjectId, included) {

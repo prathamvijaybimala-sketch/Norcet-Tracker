@@ -257,11 +257,16 @@ describe('today screen flows', () => {
   });
 
   it('hours slider: reduction rides the shortfall to the week off day; increase lightens the week last day; next week untouched', async () => {
-    const { store, unmount } = await launchWithDemo();
-    const state = () => store.getState();
-    const today = state().planConfig.startDate; // Wed 2026-09-16
-    const SUNDAY = '2026-09-20'; // this week's off day
-    const MON_NEXT = '2026-09-21';
+    // Pin the clock: the plan starts on "today", so this test's week math is
+    // written for a Wednesday start and would drift on any other weekday.
+    // Only Date is faked - real setTimeout keeps the async UI waiting sane.
+    vi.useFakeTimers({ now: new Date(2026, 8, 16, 12, 0, 0).getTime(), toFake: ['Date'] });
+    try {
+      const { store, unmount } = await launchWithDemo();
+      const state = () => store.getState();
+      const today = state().planConfig.startDate; // Wed 2026-09-16
+      const SUNDAY = '2026-09-20'; // this week's off day
+      const MON_NEXT = '2026-09-21';
 
     const weekMap = () => {
       const m = new Map<string, { sec: number; ids: string[] }>();
@@ -307,8 +312,11 @@ describe('today screen flows', () => {
     const later = ['2026-09-17', '2026-09-18', '2026-09-19'];
     for (const d of later) expect(m.get(d)!.sec).toBeLessThanOrEqual(base.get(d)!.sec);
     expect(later.some((d) => m.get(d)!.sec < base.get(d)!.sec)).toBe(true);
-    expect(nextWeek(m)).toEqual(baseNext); // next week STILL untouched
-    unmount();
+      expect(nextWeek(m)).toEqual(baseNext); // next week STILL untouched
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('Skip Day behaves exactly like a leave day - whole plan shifts, no overflow logic', async () => {
