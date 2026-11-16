@@ -1,0 +1,41 @@
+{
+  "Anatomy and Physiology": {
+    "instructor": "Dr Shrikant Verma",
+    "topics": [
+      {
+        "topic": "Introduction to Anatomical Term and Organisation",
+        "subtopics": [
+          { "name": "Introduction of Anatomy", "duration": "01:31:51" },
+          { "name": "Anatomy Introduction and Terminology", "duration": "00:33:03" }
+        ]
+      },
+      {
+        "topic": "Cell and Tissue",
+        "subtopics": [
+          { "name": "Cell Structure", "duration": "1:02:10" },
+          { "name": "Tissue Types", "duration": "45" },
+          { "name": "Broken Duration", "duration": "n/a" },
+          { "name": "Missing Duration" },
+          { "name": "Odd Format", "duration": "1h 20m" }
+        ]
+      }
+    ]
+  },
+  "Empty Subject": {
+    "instructor": "Nobody",
+    "topics": []
+  },
+  "Microbiology": {
+    "instructor": "Dr Sunita Rao",
+    "topics": [
+      { "topic": "Empty Topic", "subtopics": [] },
+      {
+        "topic": "Bacteriology",
+        "subtopics": [
+          { "name": "Gram Positive Cocci", "duration": "00:41:00" },
+          { "name": "Gram Positive Cocci", "duration": "00:22:30" }
+        ]
+      }
+    ]
+  }
+}
